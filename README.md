@@ -172,7 +172,7 @@ Returns `200` with JSON:
 
 ### A2A routes
 
-The A2A SDK middleware handles `/.well-known/agent.json`, `/a2a`, and `/`. The correct agent card route is `/.well-known/agent.json` (some documentation references `agent-card.json`, which is a typo).
+The A2A SDK middleware handles `/.well-known/agent.json` and `/a2a`. `GET /` now issues a temporary redirect (`302`) to `https://github.com/jsalsman/neshsec-poc`; JSON-RPC remains available on `/` for non-GET methods via middleware fallback. The correct agent card route is `/.well-known/agent.json` (some documentation references `agent-card.json`, which is a typo).
 
 ## Environment variables
 
