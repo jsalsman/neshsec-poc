@@ -788,7 +788,7 @@ app.get('/record', async (req, res) => {
 
     <hr>
 
-    <button id="submit" disabled>Submit Both Recordings</button>
+    <button id="submit" disabled style="background-color:#9ca3af;color:#ffffff;">Submit Both Recordings</button>
     <p id="statusSubmit"></p>
     <div id="completion" style="display:none;">
       <a href="https://app.prolific.com/submissions/complete?cc=STRESS_DONE" target="_blank" rel="noopener noreferrer">Complete on Prolific (STRESS_DONE)</a>
@@ -871,6 +871,13 @@ app.get('/record', async (req, res) => {
       const statusSubmit = document.getElementById('statusSubmit');
       const completionEl = document.getElementById('completion');
 
+      function setSubmitButtonActiveState(isActive) {
+        submitBtn.style.backgroundColor = isActive ? '#2563eb' : '#9ca3af';
+        submitBtn.style.color = '#ffffff';
+      }
+
+      setSubmitButtonActiveState(false);
+
       function makeRecorder(toggleBtnId, playbackId, statusId, onDone) {
         const toggleBtn = document.getElementById(toggleBtnId);
         const playback = document.getElementById(playbackId);
@@ -918,6 +925,7 @@ app.get('/record', async (req, res) => {
       function checkBothReady() {
         if (audioBlob1 && audioBlob2) {
           submitBtn.disabled = false;
+          setSubmitButtonActiveState(true);
           statusSubmit.textContent = 'Both recordings ready. Click Submit when satisfied with both.';
         }
       }
@@ -939,6 +947,7 @@ app.get('/record', async (req, res) => {
         }
 
         submitBtn.disabled = true;
+        setSubmitButtonActiveState(false);
         statusSubmit.textContent = 'Submitting...';
 
         const formData = new FormData();
@@ -958,6 +967,7 @@ app.get('/record', async (req, res) => {
         } else {
           statusSubmit.textContent = 'Submission failed: ' + (payload.error || 'Unknown error');
           submitBtn.disabled = false;
+          setSubmitButtonActiveState(true);
         }
       };
     </script>
