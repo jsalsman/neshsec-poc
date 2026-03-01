@@ -6,9 +6,9 @@ The NESHSEC PoC Agent is a TypeScript A2A service that orchestrates crowdsourced
 
 The service exposes A2A skills that let an operator launch, inspect, and close a Prolific study targeted at native English speakers. During launch, the agent creates the study, publishes it, and registers a webhook so completed submissions can be observed by the service. This keeps the study lifecycle operationally centralized in one A2A-callable component.
 
-Participants enter through the Prolific external study URL and land on `GET /record`, where they are assigned a paragraph, shown the text to read, and given simple controls to record, stop, preview playback, and submit. The browser converts captured microphone input into 16kHz mono WAV before upload so submitted audio matches backend requirements.
+Participants enter through the Prolific external study URL and land on `GET /record`, where they are assigned two paragraphs, shown both texts to read, and given sequential controls to record, stop, preview playback, and submit both recordings. The browser converts captured microphone input into 16kHz mono WAV before upload so submitted audio matches backend requirements.
 
-On `POST /submit`, the service forwards the recording to the Syllable Stress Assessment Agent backend via `pronunciation.evaluate` with `native_exemplar: true`. As exemplars accumulate, the backend’s adaptive pipeline improves threshold calibration, and the PoC agent can query best-effort progress using `convergence_status` while tracking study activity and submission counters toward the full set of 69 target homograph pairs.
+On `POST /submit`, the service forwards both recordings to the Syllable Stress Assessment Agent backend via `pronunciation.evaluate` with `native_exemplar: true`. As exemplars accumulate, the backend’s adaptive pipeline improves threshold calibration, and the PoC agent can query best-effort progress using `convergence_status` while tracking study activity and submission counters toward the full set of 69 target homograph pairs.
 
 ## A2A skills
 
@@ -139,14 +139,14 @@ curl https://neshsec-poc.talknicer.com/api/convergence
 
 ### GET /record
 
-This route assigns a paragraph (round-robin fallback), fetches paragraph text from the backend, and returns a minimal HTML page with start, stop, playback, and submit controls. Prolific query parameters `pid`, `study_id`, and `submission_id` are captured from the URL, while paragraph assignment is handled server-side when a custom field is unavailable. In production, paragraph distribution should move to Prolific Taskflow variants rather than relying on server-side rotation.
+This route assigns two paragraphs (round-robin fallback), fetches both paragraph texts from the backend, and returns a minimal HTML page with two recording controls (one per paragraph), playback for each recording, and a shared submit button that enables only after both recordings are ready. Prolific query parameters `pid`, `study_id`, and `submission_id` are captured from the URL, while paragraph assignment is handled server-side when a custom field is unavailable. In production, paragraph distribution should move to Prolific Taskflow variants rather than relying on server-side rotation.
 
 ### POST /submit
 
-This route accepts `multipart/form-data` with fields `audio` (file), `pid`, `study_id`, `submission_id`, and `paragraph_id`. It forwards the audio to backend `pronunciation.evaluate` as a native exemplar and returns:
+This route accepts `multipart/form-data` with fields `audio_1` (file), `audio_2` (file), `pid`, `study_id`, `submission_id`, `paragraph_id_1`, and `paragraph_id_2`. It forwards both recordings to backend `pronunciation.evaluate` as native exemplars and returns:
 
 ```json
-{ "success": true, "completion_code": "STRESS_DONE", "result": { "...": "backend response" } }
+{ "success": true, "completion_code": "STRESS_DONE", "result1": { "...": "backend response" }, "result2": { "...": "backend response" } }
 ```
 
 The backend requires 16kHz mono WAV, and the recording page performs conversion before upload.
@@ -216,7 +216,9 @@ GCS persistence is now live in the PoC when `GOOGLE_CREDENTIALS` is configured. 
 
 Accurate backend alignment depends on audio format: convert browser-captured webm/opus into 16kHz mono WAV before evaluation. In production this can be done using ffmpeg server-side or a robust WebAssembly converter client-side; this step is essential for PocketSphinx alignment quality.
 
-Use Prolific Taskflow API as the primary distribution strategy for paragraph balancing. Instead of a shared round-robin counter, create 10 paragraph-specific study variants with 30 slots each (10 × 30) to avoid concurrency edge cases and ensure deterministic sampling.
+Use Prolific Taskflow API as the primary distribution strategy for paragraph balancing. Instead of a shared round-robin counter, create 10 paragraph-specific study variants with 15 slots each (10 × 15) to avoid concurrency edge cases and ensure deterministic sampling.
+
+The current PoC cost estimate is approximately $299 USD including Prolific platform fees (~33%) for 150 participants at $1.50 each (excludes VAT).
 
 ## References
 
