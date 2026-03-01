@@ -91,6 +91,40 @@ Example invocation:
 
 ## Express routes
 
+### GET /api/study/status
+
+Returns current `agentState` and live Prolific study data (submission count and study object) if a study is active. Returns `prolific: null` if no study has been launched. Useful for monitoring without an A2A client.
+
+### POST /api/study/launch
+
+Creates, publishes, and registers webhook for a new Prolific study in one call. Returns `409` if a study is already active. Equivalent to the `study_control` launch A2A skill but callable with plain curl or a browser.
+
+Example:
+
+```bash
+curl -X POST https://neshsec-poc.talknicer.com/api/study/launch
+```
+
+### POST /api/study/close
+
+Stops the active Prolific study. Returns `404` if no study is active.
+
+Example:
+
+```bash
+curl -X POST https://neshsec-poc.talknicer.com/api/study/close
+```
+
+### GET /api/convergence
+
+Calls the backend `agent.about` endpoint and returns convergence status.
+
+Example:
+
+```bash
+curl https://neshsec-poc.talknicer.com/api/convergence
+```
+
 ### GET /record
 
 This route assigns a paragraph (round-robin fallback), fetches paragraph text from the backend, and returns a minimal HTML page with start, stop, playback, and submit controls. Prolific query parameters `pid`, `study_id`, and `submission_id` are captured from the URL, while paragraph assignment is handled server-side when a custom field is unavailable. In production, paragraph distribution should move to Prolific Taskflow variants rather than relying on server-side rotation.
@@ -109,7 +143,7 @@ The backend requires 16kHz mono WAV, and the recording page performs conversion 
 
 This route receives Prolific `submissions.completed` events and increments the in-memory `submissionsReceived` counter. A production enhancement would retrieve persisted audio from GCS and forward automatically when webhook events arrive.
 
-### GET /healthz
+### GET /api/healthz
 
 Returns `200` with JSON:
 
@@ -128,6 +162,8 @@ The A2A SDK middleware handles `/.well-known/agent.json`, `/a2a`, and `/`. The c
 | PROLIFIC_API_TOKEN | PLACEHOLDER | Prolific Bearer token. Get from prolific.com. |
 | BACKEND_URL | https://guildaidemo.talknicer.com | Base URL of Syllable Stress Assessment Agent. |
 | SERVICE_URL | https://neshsec-poc.talknicer.com | Public URL of this service, used in agent card and Prolific study URL. |
+| GCS_BUCKET_NAME | neshsec-poc | GCS bucket name for persistent state and recording sidecars. |
+| GOOGLE_CREDENTIALS | (none) | Service account JSON string for GCS access. If unset, falls back to Application Default Credentials (works automatically on Cloud Run with a configured service account). |
 | PORT | 8080 | HTTP listen port. |
 
 ## Local development quickstart
@@ -151,12 +187,14 @@ gcloud run deploy neshsec-poc \
   --port 8080 \
   --set-env-vars PROLIFIC_API_TOKEN=...,\
 BACKEND_URL=https://guildaidemo.talknicer.com,\
-SERVICE_URL=https://neshsec-poc.talknicer.com
+SERVICE_URL=https://neshsec-poc.talknicer.com,\
+GCS_BUCKET_NAME=neshsec-poc,\
+GOOGLE_CREDENTIALS='{"type":"service_account","project_id":"..."}'
 ```
 
 ## Production notes
 
-Persist `agentState` to GCS so state survives restarts and redeployments, including `lastAssignedParagraphId` updates after each paragraph assignment. The commented storage example in `src/server.ts` shows the intended pattern for load/save and for recording/analysis sidecars.
+GCS persistence is now live in the PoC when `GOOGLE_CREDENTIALS` or `GOOGLE_APPLICATION_CREDENTIALS` is configured. `agentState` (including `studyId`, `studyStatus`, submission counters, and `lastAssignedParagraphId`) is loaded from `agent-state.json` in the configured GCS bucket on startup and saved after every mutation. On Cloud Run, set `GOOGLE_CREDENTIALS` to the service account JSON string, or configure a service account with Storage Object Admin on the bucket and rely on Application Default Credentials. Recording and analysis sidecar persistence to GCS is stubbed as a TODO in the `/submit` route for the production upgrade.
 
 Accurate backend alignment depends on audio format: convert browser-captured webm/opus into 16kHz mono WAV before evaluation. In production this can be done using ffmpeg server-side or a robust WebAssembly converter client-side; this step is essential for PocketSphinx alignment quality.
 
