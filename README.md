@@ -146,7 +146,7 @@ curl https://neshsec-poc.talknicer.com/api/convergence
 
 ### GET /record
 
-This route assigns two paragraphs (round-robin fallback), fetches both paragraph texts from the backend, and returns a minimal HTML page with two recording controls (one per paragraph), playback for each recording, and a shared submit button that enables only after both recordings are ready. Each record toggle button is styled inline to appear green while ready to start and red while actively recording. Prolific query parameters `pid`, `study_id`, and `submission_id` are captured from the URL, while paragraph assignment is handled server-side when a custom field is unavailable. In production, paragraph distribution should move to Prolific Taskflow variants rather than relying on server-side rotation.
+This route assigns two paragraphs (round-robin fallback), fetches both paragraph texts from the backend, and returns a minimal HTML page with two recording controls (one per paragraph), playback for each recording, and a shared submit button that enables only after both recordings are ready. The submit button remains in the browser's default disabled gray state until activation, then turns blue when both recordings are ready. Each record toggle button is styled inline to appear green while ready to start and red while actively recording. Prolific query parameters `pid`, `study_id`, and `submission_id` are captured from the URL, while paragraph assignment is handled server-side when a custom field is unavailable. In production, paragraph distribution should move to Prolific Taskflow variants rather than relying on server-side rotation.
 
 ### POST /submit
 

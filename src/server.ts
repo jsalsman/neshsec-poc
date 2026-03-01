@@ -788,7 +788,7 @@ app.get('/record', async (req, res) => {
 
     <hr>
 
-    <button id="submit" disabled style="background-color:#9ca3af;color:#ffffff;">Submit Both Recordings</button>
+    <button id="submit" disabled>Submit Both Recordings</button>
     <p id="statusSubmit"></p>
     <div id="completion" style="display:none;">
       <a href="https://app.prolific.com/submissions/complete?cc=STRESS_DONE" target="_blank" rel="noopener noreferrer">Complete on Prolific (STRESS_DONE)</a>
@@ -872,8 +872,14 @@ app.get('/record', async (req, res) => {
       const completionEl = document.getElementById('completion');
 
       function setSubmitButtonActiveState(isActive) {
-        submitBtn.style.backgroundColor = isActive ? '#2563eb' : '#9ca3af';
-        submitBtn.style.color = '#ffffff';
+        if (isActive) {
+          submitBtn.style.backgroundColor = '#2563eb';
+          submitBtn.style.color = '#ffffff';
+          return;
+        }
+
+        submitBtn.style.backgroundColor = '';
+        submitBtn.style.color = '';
       }
 
       setSubmitButtonActiveState(false);
