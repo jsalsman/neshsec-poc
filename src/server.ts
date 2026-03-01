@@ -474,22 +474,79 @@ app.get('/api/healthz', (_req, res) => {
 
 app.get('/status', async (_req, res) => {
   try {
+    function esc(s: unknown): string {
+      return String(s ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+    }
+
     const [studyRes, convergenceRes] = await Promise.all([
       fetch(`http://localhost:${port}/api/study/status`),
       fetch(`http://localhost:${port}/api/convergence`),
     ]);
     const studyJson = await studyRes.json();
     const convergenceJson = await convergenceRes.json();
+
+    const agentStateRows = [
+      ['Study ID', studyJson.agentState.studyId ?? 'none'],
+      ['Study status', studyJson.agentState.studyStatus],
+      ['Submissions received', studyJson.agentState.submissionsReceived],
+      ['Submissions forwarded', studyJson.agentState.submissionsForwarded],
+      ['Last assigned paragraph', studyJson.agentState.lastAssignedParagraphId],
+    ]
+      .map(
+        ([field, value]) =>
+          `<tr><th>${esc(field)}</th><td>${esc(value)}</td></tr>`
+      )
+      .join('');
+
+    const prolificTable =
+      studyJson.prolific !== null
+        ? `<h3>Prolific study</h3>
+<table>
+<tr><th>Field</th><th>Value</th></tr>
+<tr><th>Submission count</th><td>${esc(studyJson.prolific.submissionCount)}</td></tr>
+<tr><th>Study status</th><td>${esc(studyJson.prolific.study?.status ?? 'unknown')}</td></tr>
+<tr><th>Study name</th><td>${esc(studyJson.prolific.study?.name ?? 'unknown')}</td></tr>
+</table>`
+        : '';
+
+    const methodRows = convergenceJson.capabilities?.methods
+      ? Object.entries(convergenceJson.capabilities.methods)
+          .map(([method, details]) => {
+            const description =
+              details && typeof details === 'object' && 'description' in details
+                ? (details as { description?: unknown }).description
+                : '';
+            return `<tr><td>${esc(method)}</td><td>${esc(description)}</td></tr>`;
+          })
+          .join('')
+      : '';
+
     res.status(200).type('html').send(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta http-equiv="refresh" content="10"/>
 <title>NESHSEC Status</title></head><body>
 <h1>NESHSEC Status</h1>
 <p>(Auto-refreshes every 10 seconds)</p>
-<h2>Study &amp; agent state</h2>
-<pre>${JSON.stringify(studyJson, null, 2)}</pre>
-<h2>Backend convergence</h2>
-<pre>${JSON.stringify(convergenceJson, null, 2)}</pre>
+<h2>Agent state</h2>
+<table>
+<tr><th>Field</th><th>Value</th></tr>
+${agentStateRows}
+</table>
+${prolificTable}
+<details><summary>Raw study JSON</summary><pre>${esc(JSON.stringify(studyJson, null, 2))}</pre></details>
+<h2>Backend</h2>
+<p>Name: ${esc(convergenceJson.name)}</p>
+<p>Version: ${esc(convergenceJson.version)}</p>
+<p>Description: ${esc(convergenceJson.description)}</p>
+<h3>Available methods</h3>
+<table>
+<tr><th>Method</th><th>Description</th></tr>
+${methodRows}
+</table>
+<details><summary>Raw convergence JSON</summary><pre>${esc(JSON.stringify(convergenceJson, null, 2))}</pre></details>
 <p><a href="/launch">Launch study</a> | <a href="/close">Close study</a> | <a href="/record">Test recording page</a></p>
 </body></html>`);
   } catch (error) {
