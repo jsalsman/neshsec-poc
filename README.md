@@ -117,6 +117,7 @@ Returns current `agentState` and live Prolific study data (submission count and 
 ### POST /api/study/launch
 
 Creates, publishes, and registers webhook for a new Prolific study in one call. Returns `409` if a study is already active. Equivalent to the `study_control` launch A2A skill but callable with plain curl or a browser.
+The launch payload sets Prolific `prolific_id_option` to `url_parameters` so the external study URL can legally include `{{%PROLIFIC_PID%}}`, `{{%SESSION_ID%}}`, and `{{%STUDY_ID%}}` placeholders.
 
 Example:
 

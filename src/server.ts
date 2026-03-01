@@ -89,6 +89,7 @@ class ProlificClient {
         // A production version would use Prolific's Taskflow API to create 10 study
         // variants (one per paragraph), each with 30 participant slots.
         external_study_url: `${this.servicePublicUrl}/record?pid={{%PROLIFIC_PID%}}&study_id={{%STUDY_ID%}}&submission_id={{%SESSION_ID%}}&paragraph_id={{%CUSTOM_STUDY_FIELD_paragraph_id%}}`,
+        prolific_id_option: 'url_parameters',
         reward: 150,
         estimated_completion_time: 3,
         total_available_places: 150,
