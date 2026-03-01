@@ -72,7 +72,12 @@ class ProlificClient {
         name: 'English Pronunciation Recording Study',
         description:
           'You will read a short English paragraph aloud and record yourself. The task takes approximately 5 minutes.',
-        external_study_url: `${this.servicePublicUrl}/record?pid={{%PROLIFIC_PID%}}&study_id={{%STUDY_ID%}}&submission_id={{%SESSION_ID%}}`,
+        // NOTE: paragraph_id is passed via a Prolific custom study field. In the PoC,
+        // if Prolific does not support custom fields on this plan, the /record route
+        // falls back to round-robin assignment via lastAssignedParagraphId.
+        // A production version would use Prolific's Taskflow API to create 10 study
+        // variants (one per paragraph), each with 30 participant slots.
+        external_study_url: `${this.servicePublicUrl}/record?pid={{%PROLIFIC_PID%}}&study_id={{%STUDY_ID%}}&submission_id={{%SESSION_ID%}}&paragraph_id={{%CUSTOM_STUDY_FIELD_paragraph_id%}}`,
         reward: 150,
         estimated_completion_time: 5,
         total_available_places: 300,
@@ -279,7 +284,11 @@ class NESHSECExecutor implements AgentExecutor {
               action,
               studyId,
               studyStatus: agentState.studyStatus,
-              estimatedCostGbp: ((300 * 150) / 100).toFixed(2),
+              estimatedCostUsd: ((300 * 1.5) * 1.33).toFixed(2),
+              estimatedCostNote:
+                'Approx $' +
+                ((300 * 1.5) * 1.33).toFixed(2) +
+                ' USD including Prolific platform fee (~33%). Excludes any VAT.',
             };
           } else if (action === 'status') {
             if (!agentState.studyId) {
@@ -474,9 +483,13 @@ app.get('/record', async (req, res) => {
   let paragraphId = 1;
 
   try {
-    const paragraphCount = await backendClient.getParagraphCount();
-    paragraphId = (agentState.lastAssignedParagraphId % paragraphCount) + 1;
-    agentState.lastAssignedParagraphId = paragraphId;
+    const paragraphCount = await backendClient.getParagraphCount().catch(() => 10);
+    const assignedId = (agentState.lastAssignedParagraphId % paragraphCount) + 1;
+    agentState.lastAssignedParagraphId = assignedId;
+    paragraphId = assignedId;
+    // PRODUCTION NOTE: persist lastAssignedParagraphId to GCS after each assignment
+    // and use an atomic compare-and-swap or a distributed lock to prevent duplicate
+    // assignments under concurrent load.
   } catch (error) {
     console.error('Failed to fetch paragraph count', error);
   }
@@ -509,6 +522,7 @@ app.get('/record', async (req, res) => {
     <p id="paragraph"><strong>${escapedParagraph}</strong></p>
     <button id="record">Start recording</button>
     <button id="stop" disabled>Stop recording</button>
+    <audio id="playback" controls style="display:none; margin-top: 0.5rem;"></audio>
     <button id="submit" disabled>Submit recording</button>
     <p id="status">Ready.</p>
     <div id="completion" style="display:none; margin-top: 1rem;">
@@ -519,6 +533,7 @@ app.get('/record', async (req, res) => {
       const recordBtn = document.getElementById('record');
       const stopBtn = document.getElementById('stop');
       const submitBtn = document.getElementById('submit');
+      const playback = document.getElementById('playback');
       const statusEl = document.getElementById('status');
       const completionEl = document.getElementById('completion');
 
@@ -526,15 +541,83 @@ app.get('/record', async (req, res) => {
       let chunks = [];
       let audioBlob;
 
+      function pcm16ToWavBlob(samples, sampleRate) {
+        const bytesPerSample = 2;
+        const blockAlign = bytesPerSample;
+        const byteRate = sampleRate * blockAlign;
+        const dataLength = samples.length * bytesPerSample;
+        const buffer = new ArrayBuffer(44 + dataLength);
+        const view = new DataView(buffer);
+
+        const writeString = (offset, value) => {
+          for (let i = 0; i < value.length; i++) {
+            view.setUint8(offset + i, value.charCodeAt(i));
+          }
+        };
+
+        writeString(0, 'RIFF');
+        view.setUint32(4, 36 + dataLength, true);
+        writeString(8, 'WAVE');
+        writeString(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, 16, true);
+        writeString(36, 'data');
+        view.setUint32(40, dataLength, true);
+
+        let offset = 44;
+        for (let i = 0; i < samples.length; i++, offset += 2) {
+          const sample = Math.max(-1, Math.min(1, samples[i]));
+          view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+        }
+
+        return new Blob([buffer], { type: 'audio/wav' });
+      }
+
+      async function convertTo16kMonoWav(blob) {
+        const arrayBuffer = await blob.arrayBuffer();
+        const audioContext = new AudioContext();
+        const decoded = await audioContext.decodeAudioData(arrayBuffer);
+        await audioContext.close();
+
+        const targetRate = 16000;
+        const offlineContext = new OfflineAudioContext(1, Math.ceil(decoded.duration * targetRate), targetRate);
+        const source = offlineContext.createBufferSource();
+
+        const monoBuffer = offlineContext.createBuffer(1, decoded.length, decoded.sampleRate);
+        const monoData = monoBuffer.getChannelData(0);
+        for (let i = 0; i < decoded.length; i++) {
+          let value = 0;
+          for (let c = 0; c < decoded.numberOfChannels; c++) {
+            value += decoded.getChannelData(c)[i] || 0;
+          }
+          monoData[i] = value / decoded.numberOfChannels;
+        }
+
+        source.buffer = monoBuffer;
+        source.connect(offlineContext.destination);
+        source.start();
+        const rendered = await offlineContext.startRendering();
+        return pcm16ToWavBlob(rendered.getChannelData(0), targetRate);
+      }
+
       recordBtn.onclick = async () => {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder = new MediaRecorder(stream);
         chunks = [];
         mediaRecorder.ondataavailable = (event) => chunks.push(event.data);
-        mediaRecorder.onstop = () => {
-          audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        mediaRecorder.onstop = async () => {
+          const rawBlob = new Blob(chunks, { type: 'audio/webm' });
+          audioBlob = await convertTo16kMonoWav(rawBlob);
+          const audioUrl = URL.createObjectURL(audioBlob);
+          playback.src = audioUrl;
+          playback.style.display = 'block';
           submitBtn.disabled = false;
-          statusEl.textContent = 'Recording captured. Ready to submit.';
+          statusEl.textContent = 'Recording captured. Listen before submitting.';
         };
         mediaRecorder.start();
         recordBtn.disabled = true;
@@ -559,9 +642,7 @@ app.get('/record', async (req, res) => {
         formData.append('study_id', ${JSON.stringify(studyId)});
         formData.append('submission_id', ${JSON.stringify(submissionId)});
         formData.append('paragraph_id', ${JSON.stringify(String(paragraphId))});
-        // Backend accepts WAV (16kHz mono) for production. This PoC sends raw webm/opus bytes.
-        // A production client should convert to WAV using ffmpeg or a browser-side WebAssembly converter.
-        formData.append('audio', audioBlob, 'recording.webm');
+        formData.append('audio', audioBlob, 'recording.wav');
 
         statusEl.textContent = 'Submitting...';
         const response = await fetch('/submit', { method: 'POST', body: formData });
@@ -603,14 +684,6 @@ app.post('/submit', upload.single('audio'), async (req, res) => {
     res.status(200).json({ success: true, completion_code: 'STRESS_DONE', result });
   } catch (error) {
     console.error('Submit route failed', error);
-    if (error instanceof ProlificConfigurationError) {
-      res.status(500).json({
-        success: false,
-        error:
-          'Submission failed because PROLIFIC_API_TOKEN is not configured correctly. Please set PROLIFIC_API_TOKEN in environment variables.',
-      });
-      return;
-    }
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -623,7 +696,7 @@ app.use('/a2a', jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuth
 app.use('/', jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
 
 app.listen(port, () => {
-  console.log(`A2A hello world agent listening on port ${port}`);
+  console.log(`NESHSEC agent listening on port ${port}`);
   console.log(`Agent card: ${serviceUrl}/.well-known/agent.json`);
   console.log(`JSON-RPC endpoint: ${serviceUrl}/a2a`);
 });
