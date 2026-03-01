@@ -175,6 +175,12 @@ export SERVICE_URL=http://localhost:8080
 npm install && npm run build && npm run start
 ```
 
+If `npm run build` reports missing modules or type declarations (for example `@google-cloud/storage` or `undici`), install dependencies from the lockfile first:
+
+```bash
+npm ci
+```
+
 Without a valid `PROLIFIC_API_TOKEN`, `study_control` calls return a clear `PROLIFIC_API_TOKEN_MISSING_OR_INVALID` error. The `/record` and `/submit` routes and `convergence_status` skill still operate independently of Prolific credentials.
 
 ## Cloud Run deploy
@@ -194,7 +200,7 @@ GOOGLE_CREDENTIALS='{"type":"service_account","project_id":"..."}'
 
 ## Production notes
 
-GCS persistence is now live in the PoC when `GOOGLE_CREDENTIALS` or `GOOGLE_APPLICATION_CREDENTIALS` is configured. `agentState` (including `studyId`, `studyStatus`, submission counters, and `lastAssignedParagraphId`) is loaded from `agent-state.json` in the configured GCS bucket on startup and saved after every mutation. On Cloud Run, set `GOOGLE_CREDENTIALS` to the service account JSON string, or configure a service account with Storage Object Admin on the bucket and rely on Application Default Credentials. Recording and analysis sidecar persistence to GCS is stubbed as a TODO in the `/submit` route for the production upgrade.
+GCS persistence is now live in the PoC when `GOOGLE_CREDENTIALS` is configured. `agentState` (including `studyId`, `studyStatus`, submission counters, and `lastAssignedParagraphId`) is loaded from `agent-state.json` in the configured GCS bucket on startup and saved after every mutation. On Cloud Run, set `GOOGLE_CREDENTIALS` to the service account JSON string for the service account that has Storage Object Admin on the bucket. Recording and analysis sidecar persistence to GCS is stubbed as a TODO in the `/submit` route for the production upgrade.
 
 Accurate backend alignment depends on audio format: convert browser-captured webm/opus into 16kHz mono WAV before evaluation. In production this can be done using ffmpeg server-side or a robust WebAssembly converter client-side; this step is essential for PocketSphinx alignment quality.
 
