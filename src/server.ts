@@ -213,8 +213,8 @@ const prolificClient = new ProlificClient(serviceUrl);
 const backendClient = new BackendClient(backendUrl);
 
 async function loadState(): Promise<void> {
-  if (!googleCredentials && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    console.log('GCS credentials not configured — using in-memory state only.');
+  if (!googleCredentials) {
+    console.log('GOOGLE_CREDENTIALS not configured — using in-memory state only.');
     return;
   }
   try {
@@ -232,8 +232,8 @@ async function loadState(): Promise<void> {
 }
 
 async function saveState(): Promise<void> {
-  if (!googleCredentials && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    return; // GCS not configured; state is in-memory only
+  if (!googleCredentials) {
+    return; // GOOGLE_CREDENTIALS not configured; state is in-memory only
   }
   try {
     await stateFile.save(JSON.stringify(agentState, null, 2), {
