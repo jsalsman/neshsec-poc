@@ -12,7 +12,17 @@ import {
 import { UserBuilder, agentCardHandler, jsonRpcHandler } from '@a2a-js/sdk/server/express';
 
 const port = Number(process.env.PORT ?? 8080);
-const serviceUrl = process.env.SERVICE_URL ?? `http://localhost:${port}`;
+const prolificApiToken = process.env.PROLIFIC_API_TOKEN ?? 'PLACEHOLDER';
+const backendUrl = process.env.BACKEND_URL ?? 'https://guildaidemo.talknicer.com';
+const serviceUrl = process.env.SERVICE_URL ?? 'https://neshsec-poc.talknicer.com';
+
+class ProlificConfigurationError extends Error {
+  constructor() {
+    super(
+      'Prolific request rejected. Please set PROLIFIC_API_TOKEN in environment variables to a valid Prolific API token.'
+    );
+  }
+}
 
 class ProlificClient {
   private readonly baseUrl = 'https://api.prolific.com/api/v1';
@@ -20,15 +30,10 @@ class ProlificClient {
   constructor(private readonly servicePublicUrl: string) {}
 
   private async request(path: string, init: RequestInit): Promise<any> {
-    const token = process.env.PROLIFIC_API_TOKEN;
-    if (!token) {
-      throw new Error('PROLIFIC_API_TOKEN is required');
-    }
-
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
-        Authorization: `Token ${token}`,
+        Authorization: `Token ${prolificApiToken}`,
         'Content-Type': 'application/json',
         ...(init.headers ?? {}),
       },
@@ -36,6 +41,9 @@ class ProlificClient {
 
     if (!response.ok) {
       const body = await response.text();
+      if (response.status === 401 || response.status === 403) {
+        throw new ProlificConfigurationError();
+      }
       throw new Error(`Prolific API error (${response.status}): ${body}`);
     }
 
@@ -53,7 +61,7 @@ class ProlificClient {
         name: 'English Pronunciation Recording Study',
         description:
           'You will read a short English paragraph aloud and record yourself. The task takes approximately 5 minutes.',
-        external_study_url: `${this.servicePublicUrl}/record?pid={{%PROLIFIC_PID%}}&study_id={{%STUDY_ID%}}&submission_id={{%SESSION_ID%}}&paragraph_id=1`,
+        external_study_url: `${this.servicePublicUrl}/record?pid={{%PROLIFIC_PID%}}&study_id={{%STUDY_ID%}}&submission_id={{%SESSION_ID%}}`,
         reward: 150,
         estimated_completion_time: 5,
         total_available_places: 300,
@@ -148,6 +156,17 @@ class BackendClient {
     return this.request('agent.about', {});
   }
 
+
+  public async getParagraphCount(): Promise<number> {
+    const result = (await this.request('paragraphs.count', {})) as {
+      count?: number;
+      paragraph_count?: number;
+      total?: number;
+    };
+    const paragraphCount = Number(result.count ?? result.paragraph_count ?? result.total ?? 1);
+    return Number.isFinite(paragraphCount) && paragraphCount > 0 ? paragraphCount : 1;
+  }
+
   public async getParagraphText(paragraphId: number): Promise<string> {
     const result = (await this.request('paragraphs.get_text', { paragraph_id: paragraphId })) as {
       text?: string;
@@ -162,7 +181,7 @@ class BackendClient {
 }
 
 const prolificClient = new ProlificClient(serviceUrl);
-const backendClient = new BackendClient(process.env.BACKEND_URL ?? '');
+const backendClient = new BackendClient(backendUrl);
 
 // PRODUCTION PERSISTENCE NOTE
 // In production, agentState should be persisted to a GCS bucket using
@@ -170,7 +189,7 @@ const backendClient = new BackendClient(process.env.BACKEND_URL ?? '');
 //
 // import { Storage } from '@google-cloud/storage';
 // const storage = new Storage();
-// const bucket = storage.bucket(process.env.GCS_BUCKET_NAME ?? 'neshsec-state');
+// const bucket = storage.bucket(process.env.GCS_BUCKET_NAME ?? 'neshsec-poc');
 // const stateFile = bucket.file('agent-state.json');
 //
 // async function loadState(): Promise<void> {
@@ -189,7 +208,9 @@ const backendClient = new BackendClient(process.env.BACKEND_URL ?? '');
 // }
 //
 // Call loadState() before app.listen() and saveState() after any mutation
-// of agentState. For recordings and analysis sidecars, follow the same
+// of agentState. For round-robin assignment, keep the last assigned paragraph
+// id in the same persisted object (for example: {"lastAssignedParagraphId": 7})
+// and update it atomically after each /record request. For recordings and analysis sidecars, follow the same
 // pattern as the Syllable Stress Assessment Agent backend: write
 // {recordingId}.wav and {recordingId}.json to the bucket using:
 //
@@ -206,6 +227,7 @@ const agentState = {
   submissionsReceived: 0,
   submissionsForwarded: 0,
   lastConvergenceCheck: null as object | null,
+  lastAssignedParagraphId: 0,
 };
 
 class NESHSECExecutor implements AgentExecutor {
@@ -218,6 +240,7 @@ class NESHSECExecutor implements AgentExecutor {
 
   public async execute(requestContext: RequestContext, eventBus: ExecutionEventBus): Promise<void> {
     let result: object;
+    let taskState: 'completed' | 'failed' = 'completed';
 
     try {
       const rawText = this.extractText(requestContext.userMessage);
@@ -319,10 +342,19 @@ class NESHSECExecutor implements AgentExecutor {
           };
       }
     } catch (error) {
-      result = {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
+      taskState = 'failed';
+      if (error instanceof ProlificConfigurationError) {
+        result = {
+          success: false,
+          code: 'PROLIFIC_API_TOKEN_MISSING_OR_INVALID',
+          error: error.message,
+        };
+      } else {
+        result = {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
     }
 
     const responseEvent: TaskStatusUpdateEvent = {
@@ -330,7 +362,7 @@ class NESHSECExecutor implements AgentExecutor {
       taskId: requestContext.taskId,
       contextId: requestContext.contextId,
       status: {
-        state: 'completed',
+        state: taskState,
         timestamp: new Date().toISOString(),
         message: {
           kind: 'message',
@@ -426,9 +458,17 @@ app.get('/record', async (req, res) => {
   const pid = String(req.query.pid ?? '');
   const studyId = String(req.query.study_id ?? '');
   const submissionId = String(req.query.submission_id ?? '');
-  const paragraphId = Number(req.query.paragraph_id ?? 1);
+  let paragraphId = 1;
 
-  let paragraphText = `Please read paragraph ${paragraphId} aloud.`;
+  try {
+    const paragraphCount = await backendClient.getParagraphCount();
+    paragraphId = (agentState.lastAssignedParagraphId % paragraphCount) + 1;
+    agentState.lastAssignedParagraphId = paragraphId;
+  } catch (error) {
+    console.error('Failed to fetch paragraph count', error);
+  }
+
+  let paragraphText = 'Paragraph text unavailable.';
   try {
     paragraphText = await backendClient.getParagraphText(paragraphId);
   } catch (error) {
@@ -452,8 +492,8 @@ app.get('/record', async (req, res) => {
   </head>
   <body>
     <h1>English Pronunciation Recording Study</h1>
-    <p><strong>Paragraph ID:</strong> ${paragraphId}</p>
-    <p id="paragraph">${escapedParagraph}</p>
+    <p>Please record yourself reading this paragraph aloud:</p>
+    <p id="paragraph"><strong>${escapedParagraph}</strong></p>
     <button id="record">Start recording</button>
     <button id="stop" disabled>Stop recording</button>
     <button id="submit" disabled>Submit recording</button>
@@ -550,6 +590,14 @@ app.post('/submit', upload.single('audio'), async (req, res) => {
     res.status(200).json({ success: true, completion_code: 'STRESS_DONE', result });
   } catch (error) {
     console.error('Submit route failed', error);
+    if (error instanceof ProlificConfigurationError) {
+      res.status(500).json({
+        success: false,
+        error:
+          'Submission failed because PROLIFIC_API_TOKEN is not configured correctly. Please set PROLIFIC_API_TOKEN in environment variables.',
+      });
+      return;
+    }
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
