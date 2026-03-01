@@ -82,7 +82,7 @@ class ProlificClient {
       body: JSON.stringify({
         name: 'English Pronunciation Recording Study',
         description:
-          'You will read a short English paragraph aloud and record yourself. The task takes approximately 5 minutes.',
+          'You will read two short English paragraphs aloud and record yourself reading each one. The task takes approximately 3 minutes.',
         // NOTE: paragraph_id is passed via a Prolific custom study field. In the PoC,
         // if Prolific does not support custom fields on this plan, the /record route
         // falls back to round-robin assignment via lastAssignedParagraphId.
@@ -90,8 +90,8 @@ class ProlificClient {
         // variants (one per paragraph), each with 30 participant slots.
         external_study_url: `${this.servicePublicUrl}/record?pid={{%PROLIFIC_PID%}}&study_id={{%STUDY_ID%}}&submission_id={{%SESSION_ID%}}&paragraph_id={{%CUSTOM_STUDY_FIELD_paragraph_id%}}`,
         reward: 150,
-        estimated_completion_time: 5,
-        total_available_places: 300,
+        estimated_completion_time: 3,
+        total_available_places: 150,
         completion_codes: [
           {
             code: 'STRESS_DONE',
@@ -290,11 +290,11 @@ class NESHSECExecutor implements AgentExecutor {
               action,
               studyId,
               studyStatus: agentState.studyStatus,
-              estimatedCostUsd: ((300 * 1.5) * 1.33).toFixed(2),
+              estimatedCostUsd: ((150 * 1.5) * 1.33).toFixed(2),
               estimatedCostNote:
                 'Approx $' +
-                ((300 * 1.5) * 1.33).toFixed(2) +
-                ' USD including Prolific platform fee (~33%). Excludes any VAT.',
+                ((150 * 1.5) * 1.33).toFixed(2) +
+                ' USD for 150 participants including Prolific platform fee (~33%). Excludes any VAT.',
             };
           } else if (action === 'status') {
             if (!agentState.studyId) {
@@ -628,11 +628,11 @@ app.post('/api/study/launch', express.json(), async (_req, res) => {
       success: true,
       studyId,
       studyStatus: agentState.studyStatus,
-      estimatedCostUsd: ((300 * 1.5) * 1.33).toFixed(2),
+      estimatedCostUsd: ((150 * 1.5) * 1.33).toFixed(2),
       estimatedCostNote:
         'Approx $' +
-        ((300 * 1.5) * 1.33).toFixed(2) +
-        ' USD including Prolific platform fee (~33%). Excludes any VAT.',
+        ((150 * 1.5) * 1.33).toFixed(2) +
+        ' USD for 150 participants including Prolific platform fee (~33%). Excludes any VAT.',
     });
   } catch (error) {
     res.status(error instanceof ProlificConfigurationError ? 401 : 500).json({
@@ -716,14 +716,17 @@ app.get('/record', async (req, res) => {
   const pid = String(req.query.pid ?? '');
   const studyId = String(req.query.study_id ?? '');
   const submissionId = String(req.query.submission_id ?? '');
-  let paragraphId = 1;
+  let paragraphId1 = 1;
+  let paragraphId2 = 2;
 
   try {
     const paragraphCount = await backendClient.getParagraphCount().catch(() => 10);
-    const assignedId = (agentState.lastAssignedParagraphId % paragraphCount) + 1;
-    agentState.lastAssignedParagraphId = assignedId;
+    const firstId = (agentState.lastAssignedParagraphId % paragraphCount) + 1;
+    const secondId = (firstId % paragraphCount) + 1;
+    agentState.lastAssignedParagraphId = secondId;
     await saveState();
-    paragraphId = assignedId;
+    paragraphId1 = firstId;
+    paragraphId2 = secondId;
     // PRODUCTION NOTE: persist lastAssignedParagraphId to GCS after each assignment
     // and use an atomic compare-and-swap or a distributed lock to prevent duplicate
     // assignments under concurrent load.
@@ -731,14 +734,22 @@ app.get('/record', async (req, res) => {
     console.error('Failed to fetch paragraph count', error);
   }
 
-  let paragraphText = 'Paragraph text unavailable.';
+  let paragraphText1 = 'Paragraph text unavailable.';
+  let paragraphText2 = 'Paragraph text unavailable.';
   try {
-    paragraphText = await backendClient.getParagraphText(paragraphId);
+    [paragraphText1, paragraphText2] = await Promise.all([
+      backendClient.getParagraphText(paragraphId1),
+      backendClient.getParagraphText(paragraphId2),
+    ]);
   } catch (error) {
     console.error('Failed to fetch paragraph text', error);
   }
 
-  const escapedParagraph = paragraphText
+  const escapedParagraph1 = paragraphText1
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+  const escapedParagraph2 = paragraphText2
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');
@@ -755,12 +766,26 @@ app.get('/record', async (req, res) => {
   </head>
   <body>
     <h1>English Pronunciation Recording Study</h1>
-    <p><strong>Please record yourself reading this paragraph aloud:</strong></p>
-    <p id="paragraph">${escapedParagraph}</p>
-    <button id="toggleRecord">Start Recording</button>
-    <audio id="playback" controls style="display:none;"></audio>
-    <button id="submit" disabled>Submit Recording</button>
-    <p id="status">Ready.</p>
+    <p><strong>Please record yourself reading each paragraph aloud, then submit both recordings.</strong></p>
+
+    <h2>Paragraph 1</h2>
+    <p id="paragraph1">${escapedParagraph1}</p>
+    <button id="toggleRecord1">Start Recording</button>
+    <audio id="playback1" controls style="display:none;"></audio>
+    <p id="status1">Ready.</p>
+
+    <hr>
+
+    <h2>Paragraph 2</h2>
+    <p id="paragraph2">${escapedParagraph2}</p>
+    <button id="toggleRecord2">Start Recording</button>
+    <audio id="playback2" controls style="display:none;"></audio>
+    <p id="status2">Ready.</p>
+
+    <hr>
+
+    <button id="submit" disabled>Submit Both Recordings</button>
+    <p id="statusSubmit"></p>
     <div id="completion" style="display:none;">
       <a href="https://app.prolific.com/submissions/complete?cc=STRESS_DONE" target="_blank" rel="noopener noreferrer">Complete on Prolific (STRESS_DONE)</a>
     </div>
@@ -838,68 +863,93 @@ app.get('/record', async (req, res) => {
         return pcm16ToWavBlob(rendered.getChannelData(0), targetRate);
       }
 
-      const toggleBtn = document.getElementById('toggleRecord');
       const submitBtn = document.getElementById('submit');
-      const playback = document.getElementById('playback');
-      const statusEl = document.getElementById('status');
+      const statusSubmit = document.getElementById('statusSubmit');
       const completionEl = document.getElementById('completion');
 
-      let mediaRecorder;
-      let chunks = [];
-      let audioBlob;
-      let recording = false;
+      function makeRecorder(toggleBtnId, playbackId, statusId, onDone) {
+        const toggleBtn = document.getElementById(toggleBtnId);
+        const playback = document.getElementById(playbackId);
+        const statusEl = document.getElementById(statusId);
+        let mediaRecorder;
+        let chunks = [];
+        let recording = false;
 
-      toggleBtn.onclick = async () => {
-        if (!recording) {
-          // Start recording
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          mediaRecorder = new MediaRecorder(stream);
-          chunks = [];
-          mediaRecorder.ondataavailable = (event) => chunks.push(event.data);
-          mediaRecorder.onstop = async () => {
-            const rawBlob = new Blob(chunks, { type: 'audio/webm' });
-            statusEl.textContent = 'Converting audio...';
-            audioBlob = await convertTo16kMonoWav(rawBlob);
-            const audioUrl = URL.createObjectURL(audioBlob);
-            playback.src = audioUrl;
-            playback.style.display = 'inline';
-            submitBtn.disabled = false;
-            statusEl.textContent = 'Recording captured. Listen before submitting.';
-          };
-          mediaRecorder.start();
-          recording = true;
-          toggleBtn.textContent = 'Stop Recording';
-          statusEl.textContent = 'Recording...';
-        } else {
-          // Stop recording
-          mediaRecorder.stop();
-          mediaRecorder.stream.getTracks().forEach(track => track.stop());
-          recording = false;
-          toggleBtn.textContent = 'Start Recording';
+        toggleBtn.onclick = async () => {
+          if (!recording) {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            chunks = [];
+            mediaRecorder.ondataavailable = (event) => chunks.push(event.data);
+            mediaRecorder.onstop = async () => {
+              const rawBlob = new Blob(chunks, { type: 'audio/webm' });
+              statusEl.textContent = 'Converting audio...';
+              const wavBlob = await convertTo16kMonoWav(rawBlob);
+              const audioUrl = URL.createObjectURL(wavBlob);
+              playback.src = audioUrl;
+              playback.style.display = 'inline';
+              statusEl.textContent = 'Recording captured. Listen before submitting.';
+              onDone(wavBlob);
+            };
+            mediaRecorder.start();
+            recording = true;
+            toggleBtn.textContent = 'Stop Recording';
+            statusEl.textContent = 'Recording...';
+          } else {
+            mediaRecorder.stop();
+            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            recording = false;
+            toggleBtn.textContent = 'Start Recording';
+          }
+        };
+      }
+
+      let audioBlob1 = null;
+      let audioBlob2 = null;
+
+      function checkBothReady() {
+        if (audioBlob1 && audioBlob2) {
+          submitBtn.disabled = false;
+          statusSubmit.textContent = 'Both recordings ready. Click Submit when satisfied with both.';
         }
-      };
+      }
+
+      makeRecorder('toggleRecord1', 'playback1', 'status1', (blob) => {
+        audioBlob1 = blob;
+        checkBothReady();
+      });
+
+      makeRecorder('toggleRecord2', 'playback2', 'status2', (blob) => {
+        audioBlob2 = blob;
+        checkBothReady();
+      });
 
       submitBtn.onclick = async () => {
-        if (!audioBlob) {
-          statusEl.textContent = 'No recording available.';
+        if (!audioBlob1 || !audioBlob2) {
+          statusSubmit.textContent = 'Both recordings are required before submitting.';
           return;
         }
+
+        submitBtn.disabled = true;
+        statusSubmit.textContent = 'Submitting...';
 
         const formData = new FormData();
         formData.append('pid', ${JSON.stringify(pid)});
         formData.append('study_id', ${JSON.stringify(studyId)});
         formData.append('submission_id', ${JSON.stringify(submissionId)});
-        formData.append('paragraph_id', ${JSON.stringify(String(paragraphId))});
-        formData.append('audio', audioBlob, 'recording.wav');
+        formData.append('paragraph_id_1', ${JSON.stringify(String(paragraphId1))});
+        formData.append('paragraph_id_2', ${JSON.stringify(String(paragraphId2))});
+        formData.append('audio_1', audioBlob1, 'recording1.wav');
+        formData.append('audio_2', audioBlob2, 'recording2.wav');
 
-        statusEl.textContent = 'Submitting...';
         const response = await fetch('/submit', { method: 'POST', body: formData });
         const payload = await response.json();
         if (payload.success) {
-          statusEl.textContent = 'Submission accepted. Click the completion link below.';
+          statusSubmit.textContent = 'Submission accepted. Click the completion link below.';
           completionEl.style.display = 'inline';
         } else {
-          statusEl.textContent = 'Submission failed: ' + (payload.error || 'Unknown error');
+          statusSubmit.textContent = 'Submission failed: ' + (payload.error || 'Unknown error');
+          submitBtn.disabled = false;
         }
       };
     </script>
@@ -907,37 +957,47 @@ app.get('/record', async (req, res) => {
 </html>`);
 });
 
-app.post('/submit', upload.single('audio'), async (req, res) => {
+app.post('/submit', upload.fields([
+  { name: 'audio_1', maxCount: 1 },
+  { name: 'audio_2', maxCount: 1 },
+]), async (req, res) => {
   try {
     const pid = String(req.body?.pid ?? '');
     const studyId = String(req.body?.study_id ?? '');
     const submissionId = String(req.body?.submission_id ?? '');
-    const paragraphId = Number(req.body?.paragraph_id ?? 1);
-
-    if (!req.file) {
-      res.status(400).json({ success: false, error: 'Missing audio file.' });
+    const paragraphId1 = Number(req.body?.paragraph_id_1 ?? 1);
+    const paragraphId2 = Number(req.body?.paragraph_id_2 ?? 2);
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    const file1 = files?.['audio_1']?.[0];
+    const file2 = files?.['audio_2']?.[0];
+    if (!file1 || !file2) {
+      res.status(400).json({ success: false, error: 'Both audio_1 and audio_2 are required.' });
       return;
     }
 
-    const audioBase64 = req.file.buffer.toString('base64');
-    const result = await backendClient.evaluateExemplar(paragraphId, audioBase64);
-    agentState.submissionsForwarded++;
+    const [result1, result2] = await Promise.all([
+      backendClient.evaluateExemplar(paragraphId1, file1.buffer.toString('base64')),
+      backendClient.evaluateExemplar(paragraphId2, file2.buffer.toString('base64')),
+    ]);
+    agentState.submissionsForwarded += 2;
     await saveState();
 
-    // TODO (production): persist WAV to GCS before forwarding to backend:
-    // await gcsBucket.file(`${submissionId}.wav`).save(req.file.buffer,
-    //   { contentType: 'audio/wav' });
-    // await gcsBucket.file(`${submissionId}.json`).save(
-    //   JSON.stringify({ pid, studyId, paragraphId, ...result }, null, 2),
-    //   { contentType: 'application/json' });
-
-    const scoreSummary = (result as { analysis?: { score_summary?: unknown } }).analysis?.score_summary;
+    const score1 = (result1 as { analysis?: { score_summary?: unknown } }).analysis?.score_summary;
+    const score2 = (result2 as { analysis?: { score_summary?: unknown } }).analysis?.score_summary;
+    // TODO (production): persist WAV files to GCS before forwarding to backend:
+    // await Promise.all([
+    //   gcsBucket.file(`${submissionId}_1.wav`).save(file1.buffer, { contentType: 'audio/wav' }),
+    //   gcsBucket.file(`${submissionId}_2.wav`).save(file2.buffer, { contentType: 'audio/wav' }),
+    //   gcsBucket.file(`${submissionId}.json`).save(
+    //     JSON.stringify({ pid, studyId, paragraphId1, paragraphId2, score1, score2 }, null, 2),
+    //     { contentType: 'application/json' }),
+    // ]);
     console.log(
-      `Forwarded submission ${submissionId} pid=${pid} study_id=${studyId} paragraph_id=${paragraphId}`,
-      scoreSummary
+      `Forwarded submission ${submissionId} pid=${pid} study_id=${studyId} paragraphs=${paragraphId1},${paragraphId2}`,
+      score1, score2
     );
 
-    res.status(200).json({ success: true, completion_code: 'STRESS_DONE', result });
+    res.status(200).json({ success: true, completion_code: 'STRESS_DONE', result1, result2 });
   } catch (error) {
     console.error('Submit route failed', error);
     res.status(500).json({
