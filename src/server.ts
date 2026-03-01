@@ -622,29 +622,17 @@ app.get('/record', async (req, res) => {
   </head>
   <body>
     <h1>English Pronunciation Recording Study</h1>
-    <p>Please record yourself reading this paragraph aloud:</p>
-    <p id="paragraph"><strong>${escapedParagraph}</strong></p>
-    <button id="record">Start recording</button>
-    <button id="stop" disabled>Stop recording</button>
-    <audio id="playback" controls style="display:none; margin-top: 0.5rem;"></audio>
-    <button id="submit" disabled>Submit recording</button>
+    <p><strong>Please record yourself reading this paragraph aloud:</strong></p>
+    <p id="paragraph">${escapedParagraph}</p>
+    <button id="toggleRecord">Start Recording</button>
+    <audio id="playback" controls style="display:none;"></audio>
+    <button id="submit" disabled>Submit Recording</button>
     <p id="status">Ready.</p>
-    <div id="completion" style="display:none; margin-top: 1rem;">
-      <a href="https://app.prolific.com/submissions/complete?cc=STRESS_DONE" target="_blank" rel="noopener noreferrer" style="font-size:1.2rem; font-weight:bold;">Complete on Prolific (STRESS_DONE)</a>
+    <div id="completion" style="display:none;">
+      <a href="https://app.prolific.com/submissions/complete?cc=STRESS_DONE" target="_blank" rel="noopener noreferrer">Complete on Prolific (STRESS_DONE)</a>
     </div>
 
     <script>
-      const recordBtn = document.getElementById('record');
-      const stopBtn = document.getElementById('stop');
-      const submitBtn = document.getElementById('submit');
-      const playback = document.getElementById('playback');
-      const statusEl = document.getElementById('status');
-      const completionEl = document.getElementById('completion');
-
-      let mediaRecorder;
-      let chunks = [];
-      let audioBlob;
-
       function pcm16ToWavBlob(samples, sampleRate) {
         const bytesPerSample = 2;
         const blockAlign = bytesPerSample;
@@ -717,30 +705,45 @@ app.get('/record', async (req, res) => {
         return pcm16ToWavBlob(rendered.getChannelData(0), targetRate);
       }
 
-      recordBtn.onclick = async () => {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        chunks = [];
-        mediaRecorder.ondataavailable = (event) => chunks.push(event.data);
-        mediaRecorder.onstop = async () => {
-          const rawBlob = new Blob(chunks, { type: 'audio/webm' });
-          audioBlob = await convertTo16kMonoWav(rawBlob);
-          const audioUrl = URL.createObjectURL(audioBlob);
-          playback.src = audioUrl;
-          playback.style.display = 'block';
-          submitBtn.disabled = false;
-          statusEl.textContent = 'Recording captured. Listen before submitting.';
-        };
-        mediaRecorder.start();
-        recordBtn.disabled = true;
-        stopBtn.disabled = false;
-        statusEl.textContent = 'Recording...';
-      };
+      const toggleBtn = document.getElementById('toggleRecord');
+      const submitBtn = document.getElementById('submit');
+      const playback = document.getElementById('playback');
+      const statusEl = document.getElementById('status');
+      const completionEl = document.getElementById('completion');
 
-      stopBtn.onclick = () => {
-        mediaRecorder.stop();
-        stopBtn.disabled = true;
-        recordBtn.disabled = false;
+      let mediaRecorder;
+      let chunks = [];
+      let audioBlob;
+      let recording = false;
+
+      toggleBtn.onclick = async () => {
+        if (!recording) {
+          // Start recording
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream);
+          chunks = [];
+          mediaRecorder.ondataavailable = (event) => chunks.push(event.data);
+          mediaRecorder.onstop = async () => {
+            const rawBlob = new Blob(chunks, { type: 'audio/webm' });
+            statusEl.textContent = 'Converting audio...';
+            audioBlob = await convertTo16kMonoWav(rawBlob);
+            const audioUrl = URL.createObjectURL(audioBlob);
+            playback.src = audioUrl;
+            playback.style.display = 'inline';
+            submitBtn.disabled = false;
+            statusEl.textContent = 'Recording captured. Listen before submitting.';
+          };
+          mediaRecorder.start();
+          recording = true;
+          toggleBtn.textContent = 'Stop Recording';
+          statusEl.textContent = 'Recording...';
+        } else {
+          // Stop recording
+          mediaRecorder.stop();
+          mediaRecorder.stream.getTracks().forEach(track => track.stop());
+          recording = false;
+          toggleBtn.textContent = 'Start Recording';
+        }
       };
 
       submitBtn.onclick = async () => {
@@ -761,7 +764,7 @@ app.get('/record', async (req, res) => {
         const payload = await response.json();
         if (payload.success) {
           statusEl.textContent = 'Submission accepted. Click the completion link below.';
-          completionEl.style.display = 'block';
+          completionEl.style.display = 'inline';
         } else {
           statusEl.textContent = 'Submission failed: ' + (payload.error || 'Unknown error');
         }
