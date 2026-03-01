@@ -1,6 +1,6 @@
-# NESHSEC PoC Agent
+# Native English Speaker Homograph Stress Exemplar Crowdsourcer (NESHSEC) proof of concept agent
 
-NESHSEC PoC Agent is a focused TypeScript A2A service that orchestrates crowdsourced native English speech collection for homograph stress modeling. It exists to bootstrap the Syllable Stress Assessment Agent’s learned threshold calibration by launching a Prolific study, collecting participant paragraph recordings, and forwarding those recordings as native exemplars so the backend can improve stress-decision quality across target word pairs.
+The NESHSEC PoC Agent is a TypeScript A2A service that orchestrates crowdsourced native English speech collection for homograph stress modeling. It exists to bootstrap the [Syllable Stress Assessment Agent](https://guildaidemo.talknicer.com)’s learned threshold calibration by launching a [Prolific.com](https://www.prolific.com) study, collecting native English speaker participants' paragraph recordings, and forwarding those recordings as native exemplars so the backend can improve stress-decision quality across target word pairs.
 
 ## How it works
 
