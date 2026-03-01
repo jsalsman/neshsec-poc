@@ -32,6 +32,8 @@ Defaults are applied when values are missing:
 
 If `PROLIFIC_API_TOKEN` is missing/invalid and Prolific rejects requests, the agent returns a clear error telling operators to configure `PROLIFIC_API_TOKEN`.
 
+If `HTTP_PROXY`/`HTTPS_PROXY` (or lowercase variants) are set, outbound backend and Prolific fetches use those proxy settings automatically (helps avoid `ENETUNREACH` in proxied environments).
+
 ## Local development quickstart
 
 ```bash

@@ -10,11 +10,19 @@ import {
   RequestContext,
 } from '@a2a-js/sdk/server';
 import { UserBuilder, agentCardHandler, jsonRpcHandler } from '@a2a-js/sdk/server/express';
+import { Dispatcher, EnvHttpProxyAgent } from 'undici';
 
 const port = Number(process.env.PORT ?? 8080);
 const prolificApiToken = process.env.PROLIFIC_API_TOKEN ?? 'PLACEHOLDER';
 const backendUrl = process.env.BACKEND_URL ?? 'https://guildaidemo.talknicer.com';
 const serviceUrl = process.env.SERVICE_URL ?? 'https://neshsec-poc.talknicer.com';
+
+const proxyDispatcher: Dispatcher | undefined =
+  process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy
+    ? new EnvHttpProxyAgent()
+    : undefined;
+
+type FetchInitWithDispatcher = RequestInit & { dispatcher?: Dispatcher };
 
 class ProlificConfigurationError extends Error {
   constructor() {
@@ -30,14 +38,17 @@ class ProlificClient {
   constructor(private readonly servicePublicUrl: string) {}
 
   private async request(path: string, init: RequestInit): Promise<any> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const requestInit: FetchInitWithDispatcher = {
       ...init,
+      ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
       headers: {
         Authorization: `Token ${prolificApiToken}`,
         'Content-Type': 'application/json',
         ...(init.headers ?? {}),
       },
-    });
+    };
+
+    const response = await fetch(`${this.baseUrl}${path}`, requestInit);
 
     if (!response.ok) {
       const body = await response.text();
@@ -119,8 +130,9 @@ class BackendClient {
       throw new Error('BACKEND_URL is required');
     }
 
-    const response = await fetch(`${this.backendUrl}/a2a`, {
+    const requestInit: FetchInitWithDispatcher = {
       method: 'POST',
+      ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         jsonrpc: '2.0',
@@ -128,7 +140,9 @@ class BackendClient {
         method,
         params,
       }),
-    });
+    };
+
+    const response = await fetch(`${this.backendUrl}/a2a`, requestInit);
 
     if (!response.ok) {
       const body = await response.text();
@@ -155,7 +169,6 @@ class BackendClient {
     // The backend does not yet expose a dedicated convergence endpoint. agent.about is used as a best-effort status check. A future version will add a convergence_status method to the backend's A2A interface.
     return this.request('agent.about', {});
   }
-
 
   public async getParagraphCount(): Promise<number> {
     const result = (await this.request('paragraphs.count', {})) as {
