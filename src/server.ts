@@ -870,6 +870,30 @@ app.get('/record', async (req, res) => {
       const submitBtn = document.getElementById('submit');
       const statusSubmit = document.getElementById('statusSubmit');
       const completionEl = document.getElementById('completion');
+      const toggleRecord1Btn = document.getElementById('toggleRecord1');
+      const toggleRecord2Btn = document.getElementById('toggleRecord2');
+
+      function setRecorderButtonAvailability(activeButtonId) {
+        const disableFirst = activeButtonId === 'toggleRecord2';
+        const disableSecond = activeButtonId === 'toggleRecord1';
+        toggleRecord1Btn.disabled = disableFirst;
+        toggleRecord2Btn.disabled = disableSecond;
+      }
+
+      setRecorderButtonAvailability(null);
+
+      function setSubmitButtonActiveState(isActive) {
+        if (isActive) {
+          submitBtn.style.backgroundColor = '#2563eb';
+          submitBtn.style.color = '#ffffff';
+          return;
+        }
+
+        submitBtn.style.backgroundColor = '';
+        submitBtn.style.color = '';
+      }
+
+      setSubmitButtonActiveState(false);
 
       function makeRecorder(toggleBtnId, playbackId, statusId, onDone) {
         const toggleBtn = document.getElementById(toggleBtnId);
@@ -897,6 +921,7 @@ app.get('/record', async (req, res) => {
             };
             mediaRecorder.start();
             recording = true;
+            setRecorderButtonAvailability(toggleBtnId);
             toggleBtn.textContent = 'Stop Recording';
             toggleBtn.style.backgroundColor = '#dc2626';
             toggleBtn.style.color = '#ffffff';
@@ -905,6 +930,7 @@ app.get('/record', async (req, res) => {
             mediaRecorder.stop();
             mediaRecorder.stream.getTracks().forEach(track => track.stop());
             recording = false;
+            setRecorderButtonAvailability(null);
             toggleBtn.textContent = 'Start Recording';
             toggleBtn.style.backgroundColor = '#16a34a';
             toggleBtn.style.color = '#ffffff';
@@ -918,6 +944,7 @@ app.get('/record', async (req, res) => {
       function checkBothReady() {
         if (audioBlob1 && audioBlob2) {
           submitBtn.disabled = false;
+          setSubmitButtonActiveState(true);
           statusSubmit.textContent = 'Both recordings ready. Click Submit when satisfied with both.';
         }
       }
@@ -939,6 +966,7 @@ app.get('/record', async (req, res) => {
         }
 
         submitBtn.disabled = true;
+        setSubmitButtonActiveState(false);
         statusSubmit.textContent = 'Submitting...';
 
         const formData = new FormData();
@@ -958,6 +986,7 @@ app.get('/record', async (req, res) => {
         } else {
           statusSubmit.textContent = 'Submission failed: ' + (payload.error || 'Unknown error');
           submitBtn.disabled = false;
+          setSubmitButtonActiveState(true);
         }
       };
     </script>
