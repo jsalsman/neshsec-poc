@@ -15,6 +15,7 @@ import { Dispatcher, EnvHttpProxyAgent } from 'undici';
 
 const port = Number(process.env.PORT ?? 8080);
 const prolificApiToken = process.env.PROLIFIC_API_TOKEN ?? 'PLACEHOLDER';
+const prolificLanguageFilterId = process.env.PROLIFIC_LANGUAGE_FILTER_ID;
 const backendUrl = process.env.BACKEND_URL ?? 'https://guildaidemo.talknicer.com';
 const serviceUrl = process.env.SERVICE_URL ?? 'https://neshsec-poc.talknicer.com';
 const googleCredentials = process.env.GOOGLE_CREDENTIALS
@@ -76,33 +77,63 @@ class ProlificClient {
     return response.json();
   }
 
+  private buildStudyPayload(languageFilterId: string): object {
+    return {
+      name: 'English Pronunciation Recording Study',
+      description:
+        'You will read two short English paragraphs aloud and record yourself reading each one. The task takes approximately 3 minutes.',
+      // NOTE: paragraph_id is passed via a Prolific custom study field. In the PoC,
+      // if Prolific does not support custom fields on this plan, the /record route
+      // falls back to round-robin assignment via lastAssignedParagraphId.
+      // A production version would use Prolific's Taskflow API to create 10 study
+      // variants (one per paragraph), each with 30 participant slots.
+      external_study_url: `${this.servicePublicUrl}/record?pid={{%PROLIFIC_PID%}}&study_id={{%STUDY_ID%}}&submission_id={{%SESSION_ID%}}&paragraph_id={{%CUSTOM_STUDY_FIELD_paragraph_id%}}`,
+      prolific_id_option: 'url_parameters',
+      reward: 150,
+      estimated_completion_time: 3,
+      total_available_places: 150,
+      completion_codes: [
+        {
+          code: 'STRESS_DONE',
+          code_type: 'COMPLETED',
+          actions: [{ action: 'AUTOMATICALLY_APPROVE' }],
+        },
+      ],
+      filters: [{ filter_id: languageFilterId, selected_values: ['EN'] }],
+    };
+  }
+
+  private isUnknownFilterError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('Filter ID') && message.includes('does not match a known filter');
+  }
+
   public async createStudy(): Promise<any> {
-    return this.request('/studies', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: 'English Pronunciation Recording Study',
-        description:
-          'You will read two short English paragraphs aloud and record yourself reading each one. The task takes approximately 3 minutes.',
-        // NOTE: paragraph_id is passed via a Prolific custom study field. In the PoC,
-        // if Prolific does not support custom fields on this plan, the /record route
-        // falls back to round-robin assignment via lastAssignedParagraphId.
-        // A production version would use Prolific's Taskflow API to create 10 study
-        // variants (one per paragraph), each with 30 participant slots.
-        external_study_url: `${this.servicePublicUrl}/record?pid={{%PROLIFIC_PID%}}&study_id={{%STUDY_ID%}}&submission_id={{%SESSION_ID%}}&paragraph_id={{%CUSTOM_STUDY_FIELD_paragraph_id%}}`,
-        prolific_id_option: 'url_parameters',
-        reward: 150,
-        estimated_completion_time: 3,
-        total_available_places: 150,
-        completion_codes: [
-          {
-            code: 'STRESS_DONE',
-            code_type: 'COMPLETED',
-            actions: [{ action: 'AUTOMATICALLY_APPROVE' }],
-          },
-        ],
-        filters: [{ filter_id: 'language_fluencies', selected_values: ['EN'] }],
-      }),
-    });
+    const candidateFilterIds = [
+      prolificLanguageFilterId,
+      'fluent_languages',
+      'language_fluency',
+      'language_fluencies',
+    ].filter((id, index, all): id is string => Boolean(id) && all.indexOf(id) === index);
+
+    let lastError: unknown;
+    for (const filterId of candidateFilterIds) {
+      try {
+        return await this.request('/studies', {
+          method: 'POST',
+          body: JSON.stringify(this.buildStudyPayload(filterId)),
+        });
+      } catch (error) {
+        lastError = error;
+        if (!this.isUnknownFilterError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    throw new Error(
+      `Prolific rejected all configured language filter IDs (${candidateFilterIds.join(', ')}). Set PROLIFIC_LANGUAGE_FILTER_ID to the filter ID available in your Prolific workspace.`
+    );
   }
 
   public async publishStudy(studyId: string): Promise<any> {

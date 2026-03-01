@@ -180,6 +180,7 @@ The A2A SDK middleware handles `/.well-known/agent.json` and `/a2a`. `GET /` now
 | Variable | Default | Description |
 |---|---|---|
 | PROLIFIC_API_TOKEN | PLACEHOLDER | Prolific Bearer token. Get from prolific.com. |
+| PROLIFIC_LANGUAGE_FILTER_ID | (auto) | Optional Prolific eligibility filter ID for English fluency. If unset, the service tries known IDs (`fluent_languages`, `language_fluency`, `language_fluencies`) and returns a clear error if none are valid for your workspace. |
 | BACKEND_URL | https://guildaidemo.talknicer.com | Base URL of Syllable Stress Assessment Agent. |
 | SERVICE_URL | https://neshsec-poc.talknicer.com | Public URL of this service, used in agent card and Prolific study URL. |
 | GCS_BUCKET_NAME | neshsec-poc | GCS bucket name for persistent state and recording sidecars. |
@@ -201,7 +202,7 @@ If `npm run build` reports missing modules or type declarations (for example `@g
 npm ci
 ```
 
-Without a valid `PROLIFIC_API_TOKEN`, `study_control` calls return a clear `PROLIFIC_API_TOKEN_MISSING_OR_INVALID` error. The `/record` and `/submit` routes and `convergence_status` skill still operate independently of Prolific credentials.
+Without a valid `PROLIFIC_API_TOKEN`, `study_control` calls return a clear `PROLIFIC_API_TOKEN_MISSING_OR_INVALID` error. If launch fails with an unknown Prolific filter ID, set `PROLIFIC_LANGUAGE_FILTER_ID` to the language filter ID configured in your Prolific workspace. The `/record` and `/submit` routes and `convergence_status` skill still operate independently of Prolific credentials.
 
 ## Cloud Run deploy
 
