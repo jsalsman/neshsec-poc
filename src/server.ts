@@ -590,7 +590,7 @@ app.get('/launch', (_req, res) => {
 <title>Launch Study</title></head><body>
 <h1>Launch Prolific Study</h1>
 <p>This will create, publish, and register the webhook for a new Prolific study
-targeting 300 native English speakers at $1.50 each (~$599 including platform fee).</p>
+targeting 150 participants at £1.50 each (~£300 including Prolific platform fee).</p>
 <p>Only one study may be active at a time.</p>
 <button id="btn" onclick="launch()">Launch Study</button>
 <pre id="result"></pre>
