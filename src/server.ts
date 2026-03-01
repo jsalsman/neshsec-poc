@@ -763,24 +763,40 @@ app.get('/record', async (req, res) => {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>NESHSEC Recording</title>
+    <style>
+      .recording-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      .recording-status {
+        margin: 0;
+      }
+    </style>
   </head>
   <body>
     <h1>English Pronunciation Recording Study</h1>
     <p><strong>Please record yourself reading each paragraph aloud, then submit both recordings.</strong></p>
 
-    <h2>Paragraph 1</h2>
+    <h4>Paragraph 1</h4>
     <p id="paragraph1">${escapedParagraph1}</p>
-    <button id="toggleRecord1">Start Recording</button>
-    <audio id="playback1" controls style="display:none;"></audio>
-    <p id="status1">Ready.</p>
+    <div class="recording-controls">
+      <button id="toggleRecord1">Start Recording</button>
+      <audio id="playback1" controls style="display:none;"></audio>
+      <p id="status1" class="recording-status">Ready.</p>
+    </div>
 
     <hr>
 
-    <h2>Paragraph 2</h2>
+    <h4>Paragraph 2</h4>
     <p id="paragraph2">${escapedParagraph2}</p>
-    <button id="toggleRecord2">Start Recording</button>
-    <audio id="playback2" controls style="display:none;"></audio>
-    <p id="status2">Ready.</p>
+    <div class="recording-controls">
+      <button id="toggleRecord2">Start Recording</button>
+      <audio id="playback2" controls style="display:none;"></audio>
+      <p id="status2" class="recording-status">Ready.</p>
+    </div>
 
     <hr>
 
