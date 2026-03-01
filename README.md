@@ -91,6 +91,18 @@ Example invocation:
 
 ## Express routes
 
+### GET /status
+
+Browser-friendly status dashboard showing study state and backend convergence data side by side. Auto-refreshes every 10 seconds. Links to /launch, /close, and /record.
+
+### GET /launch
+
+Browser-accessible confirmation page that POSTs to /api/study/launch on button click and displays the JSON result inline. Includes a link to /status.
+
+### GET /close
+
+Browser-accessible confirmation page that POSTs to /api/study/close on button click and displays the JSON result inline. Includes a link to /status.
+
 ### GET /api/study/status
 
 Returns current `agentState` and live Prolific study data (submission count and study object) if a study is active. Returns `prolific: null` if no study has been launched. Useful for monitoring without an A2A client.

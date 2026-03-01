@@ -472,6 +472,37 @@ app.get('/api/healthz', (_req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
+app.get('/status', async (_req, res) => {
+  try {
+    const [studyRes, convergenceRes] = await Promise.all([
+      fetch(`http://localhost:${port}/api/study/status`),
+      fetch(`http://localhost:${port}/api/convergence`),
+    ]);
+    const studyJson = await studyRes.json();
+    const convergenceJson = await convergenceRes.json();
+    res.status(200).type('html').send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/>
+<meta http-equiv="refresh" content="10"/>
+<title>NESHSEC Status</title></head><body>
+<h1>NESHSEC Status</h1>
+<p>(Auto-refreshes every 10 seconds)</p>
+<h2>Study &amp; agent state</h2>
+<pre>${JSON.stringify(studyJson, null, 2)}</pre>
+<h2>Backend convergence</h2>
+<pre>${JSON.stringify(convergenceJson, null, 2)}</pre>
+<p><a href="/launch">Launch study</a> | <a href="/close">Close study</a> | <a href="/record">Test recording page</a></p>
+</body></html>`);
+  } catch (error) {
+    res.status(500).type('html').send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/>
+<title>NESHSEC Status</title></head><body>
+<h1>NESHSEC Status</h1>
+<p>Error fetching status: ${error instanceof Error ? error.message : 'Unknown error'}</p>
+<p><a href="/status">Retry</a></p>
+</body></html>`);
+  }
+});
+
 app.get('/api/study/status', async (_req, res) => {
   if (!agentState.studyId) {
     res.status(200).json({ agentState, prolific: null });
@@ -494,6 +525,29 @@ app.get('/api/study/status', async (_req, res) => {
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
+});
+
+app.get('/launch', (_req, res) => {
+  res.status(200).type('html').send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/>
+<title>Launch Study</title></head><body>
+<h1>Launch Prolific Study</h1>
+<p>This will create, publish, and register the webhook for a new Prolific study
+targeting 300 native English speakers at $1.50 each (~$599 including platform fee).</p>
+<p>Only one study may be active at a time.</p>
+<button id="btn" onclick="launch()">Launch Study</button>
+<pre id="result"></pre>
+<p><a href="/status">Study status</a> | <a href="/record">Test recording page</a></p>
+<script>
+  async function launch() {
+    document.getElementById('btn').disabled = true;
+    document.getElementById('result').textContent = 'Launching...';
+    const r = await fetch('/api/study/launch', { method: 'POST' });
+    const j = await r.json();
+    document.getElementById('result').textContent = JSON.stringify(j, null, 2);
+  }
+</script>
+</body></html>`);
 });
 
 app.post('/api/study/launch', express.json(), async (_req, res) => {
@@ -529,6 +583,28 @@ app.post('/api/study/launch', express.json(), async (_req, res) => {
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
+});
+
+app.get('/close', (_req, res) => {
+  res.status(200).type('html').send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/>
+<title>Close Study</title></head><body>
+<h1>Close Prolific Study</h1>
+<p>This will stop the currently active Prolific study. Participants already
+in progress will not be affected but no new slots will open.</p>
+<button id="btn" onclick="closeStudy()">Close Study</button>
+<pre id="result"></pre>
+<p><a href="/status">Study status</a> | <a href="/record">Test recording page</a></p>
+<script>
+  async function closeStudy() {
+    document.getElementById('btn').disabled = true;
+    document.getElementById('result').textContent = 'Closing...';
+    const r = await fetch('/api/study/close', { method: 'POST' });
+    const j = await r.json();
+    document.getElementById('result').textContent = JSON.stringify(j, null, 2);
+  }
+</script>
+</body></html>`);
 });
 
 app.post('/api/study/close', express.json(), async (_req, res) => {
