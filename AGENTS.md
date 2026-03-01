@@ -1,74 +1,39 @@
-# @a2a-js/sdk
+# NESHSEC PoC Agent
 
-## Project Overview
+## Project overview
 
-`@a2a-js/sdk` is the official TypeScript/JavaScript SDK for the **Agent2Agent (A2A) Protocol**. It enables developers to build both:
+This repository contains a **single TypeScript A2A agent service** used for a Native English Speaker Homograph Stress Exemplar Crowdsourcer proof of concept.
 
-1.  **A2A Clients**: Applications that can discover, connect to, and interact with A2A agents.
-2.  **A2A Servers**: Agents that expose their capabilities via the A2A protocol (JSON-RPC or HTTP+JSON/REST).
+The service:
+- Exposes A2A JSON-RPC routes via `@a2a-js/sdk`.
+- Integrates with **Prolific** to launch/monitor/close a study.
+- Serves a participant recording page at `/record`.
+- Forwards submitted audio to the backend A2A service (`pronunciation.evaluate`) as native exemplars.
 
-The SDK implements the **A2A Protocol Specification v0.3.0**.
+## Tech stack
 
-## Tech Stack
+- Node.js (>= 20)
+- TypeScript
+- Express
+- `@a2a-js/sdk`
+- Multer (multipart form uploads)
 
-*   **Language**: TypeScript (Node.js >= 18)
-*   **Build System**: `tsup` (Outputs ESM and CJS)
-*   **Testing Framework**: `vitest`
-*   **Linting/Formatting**: `eslint`, `prettier`
-*   **Peer Dependencies**: `express` (for server-side Express integration)
+## Key files
 
-## Architecture & Key Components
+- `src/server.ts`: Main server implementation, A2A executor, Prolific client, backend client, and Express routes.
+- `README.md`: Deployment/runtime behavior and environment configuration.
 
-The project is structured into modular entry points to allow tree-shaking and separation of concerns.
+## Commands
 
-### 1. Common (`src/index.ts`)
-*   **Types**: Core protocol types (`Message`, `Task`, `AgentCard`).
-*   **Constants**: Protocol constants like `AGENT_CARD_PATH`.
-*   **Errors**: Common error classes (`A2AError`).
+- `npm run build`: Compile TypeScript into `dist/`.
+- `npm run start`: Run the compiled server (`dist/server.js`).
 
-### 2. Client (`src/client/index.ts`)
-*   **`ClientFactory`**: The main entry point for creating clients. Can create clients from a base URL or an `AgentCard`.
-*   **`A2AClient`**: The interface for sending messages and streams.
-*   **Transports**:
-    *   `JsonRpcTransport`: Uses JSON-RPC over HTTP.
-    *   `RestTransport`: Uses standard HTTP+JSON REST patterns.
-*   **Interceptors**: `CallInterceptor` for modifying requests/responses (e.g., adding auth headers).
-*   **Auth**: `AuthenticationHandler` and `createAuthenticatingFetchWithRetry` for handling token refresh logic.
+## Development conventions
 
-### 3. Server (`src/server/index.ts`)
-*   **`AgentExecutor`**: The core interface you implement to define your agent's logic (`execute`, `cancelTask`).
-*   **`DefaultRequestHandler`**: Orchestrates request processing, task management, and event dispatching.
-*   **`ExecutionEventBus`**: Used within `AgentExecutor` to publish `Message`, `Task`, and `Artifact` updates.
-*   **`InMemoryTaskStore`**: Default in-memory storage for task state.
-*   **Push Notifications**: `PushNotificationSender` and `InMemoryPushNotificationStore` for async updates.
-
-### 4. Server Express Integration (`src/server/express/index.ts`)
-*   **Handlers**: `agentCardHandler`, `jsonRpcHandler`, `restHandler` to easily mount A2A endpoints in an Express app.
-*   **`UserBuilder`**: Middleware for extracting user identity from requests.
-
-## Building and Running
-
-### Key Commands
-| Command | Description |
-| :--- | :--- |
-| `npm run build` | Builds the SDK using `tsup` into `dist/`. |
-| `npm test` | Runs unit tests using `vitest`. |
-| `npm run lint`    | Runs all linting checks and applies automatic fixes (ESLint + Prettier + betterer). |
-| `npm run lint:ci` | Runs all linting checks without applying fixes. Fails if any issues are found.      |
-| `npm run format:readme` | Formats the README file. |
-
-## Samples
-
-The `src/samples` directory contains practical examples:
-
-*   **`agents/`**:
-    *   `movie-agent/`: A sample agent that queries movie data from TMDB.
-    *   `sample-agent/`: A basic reference agent implementation.
-*   **`authentication/`**: Examples of how to implement authentication middleware and user building.
-*   **`extensions/`**: Examples of using protocol extensions.
-*   **`cli.ts`**: A CLI tool example for interacting with agents.
-
-## Development Conventions
-
-*   **Testing**: All new features should have accompanying unit tests in `test/` or alongside source files.
-*   **Exports**: The project uses specific export paths in `package.json` (`.`, `./client`, `./server`, `./server/express`). Ensure new components are exported from the correct entry point.
+- Keep changes focused on this PoC agent (no SDK-wide architecture assumptions).
+- When adding user-visible behavior changes, update `README.md` in the same change.
+- Prefer explicit, human-readable errors for configuration issues (especially env vars).
+- Preserve compatibility with the existing A2A skill payload format:
+  - `study_control`
+  - `convergence_status`
+  - `submit_exemplar`
