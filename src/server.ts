@@ -763,18 +763,6 @@ app.get('/record', async (req, res) => {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>NESHSEC Recording</title>
-    <style>
-      .recording-controls {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        flex-wrap: wrap;
-      }
-
-      .recording-status {
-        margin: 0;
-      }
-    </style>
   </head>
   <body>
     <h1>English Pronunciation Recording Study</h1>
@@ -782,20 +770,20 @@ app.get('/record', async (req, res) => {
 
     <h4>Paragraph 1</h4>
     <p id="paragraph1">${escapedParagraph1}</p>
-    <div class="recording-controls">
-      <button id="toggleRecord1">Start Recording</button>
+    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+      <button id="toggleRecord1" style="background-color:#16a34a;color:#ffffff;">Start Recording</button>
       <audio id="playback1" controls style="display:none;"></audio>
-      <p id="status1" class="recording-status">Ready.</p>
+      <p id="status1" style="margin:0;">Ready.</p>
     </div>
 
     <hr>
 
     <h4>Paragraph 2</h4>
     <p id="paragraph2">${escapedParagraph2}</p>
-    <div class="recording-controls">
-      <button id="toggleRecord2">Start Recording</button>
+    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+      <button id="toggleRecord2" style="background-color:#16a34a;color:#ffffff;">Start Recording</button>
       <audio id="playback2" controls style="display:none;"></audio>
-      <p id="status2" class="recording-status">Ready.</p>
+      <p id="status2" style="margin:0;">Ready.</p>
     </div>
 
     <hr>
@@ -910,12 +898,16 @@ app.get('/record', async (req, res) => {
             mediaRecorder.start();
             recording = true;
             toggleBtn.textContent = 'Stop Recording';
+            toggleBtn.style.backgroundColor = '#dc2626';
+            toggleBtn.style.color = '#ffffff';
             statusEl.textContent = 'Recording...';
           } else {
             mediaRecorder.stop();
             mediaRecorder.stream.getTracks().forEach(track => track.stop());
             recording = false;
             toggleBtn.textContent = 'Start Recording';
+            toggleBtn.style.backgroundColor = '#16a34a';
+            toggleBtn.style.color = '#ffffff';
           }
         };
       }
