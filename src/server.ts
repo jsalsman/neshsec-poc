@@ -1,6 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
+import { Storage } from '@google-cloud/storage';
 import { AgentCard, Message, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import {
   AgentExecutor,
@@ -16,6 +17,16 @@ const port = Number(process.env.PORT ?? 8080);
 const prolificApiToken = process.env.PROLIFIC_API_TOKEN ?? 'PLACEHOLDER';
 const backendUrl = process.env.BACKEND_URL ?? 'https://guildaidemo.talknicer.com';
 const serviceUrl = process.env.SERVICE_URL ?? 'https://neshsec-poc.talknicer.com';
+const googleCredentials = process.env.GOOGLE_CREDENTIALS
+  ? JSON.parse(process.env.GOOGLE_CREDENTIALS)
+  : undefined;
+const gcsBucketName = process.env.GCS_BUCKET_NAME ?? 'neshsec-poc';
+
+const storage = googleCredentials
+  ? new Storage({ credentials: googleCredentials, projectId: googleCredentials.project_id })
+  : new Storage(); // Falls back to Application Default Credentials on Cloud Run
+const gcsBucket = storage.bucket(gcsBucketName);
+const stateFile = gcsBucket.file('agent-state.json');
 
 const proxyDispatcher: Dispatcher | undefined =
   process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy
@@ -201,44 +212,38 @@ class BackendClient {
 const prolificClient = new ProlificClient(serviceUrl);
 const backendClient = new BackendClient(backendUrl);
 
-// PRODUCTION PERSISTENCE NOTE
-// In production, agentState should be persisted to a GCS bucket using
-// @google-cloud/storage so it survives redeployments. Example pattern:
-//
-// import { Storage } from '@google-cloud/storage';
-// const storage = new Storage();
-// const bucket = storage.bucket(process.env.GCS_BUCKET_NAME ?? 'neshsec-poc');
-// const stateFile = bucket.file('agent-state.json');
-//
-// async function loadState(): Promise<void> {
-//   try {
-//     const [contents] = await stateFile.download();
-//     Object.assign(agentState, JSON.parse(contents.toString()));
-//   } catch (e) {
-//     // File doesn't exist yet on first run — use defaults.
-//   }
-// }
-//
-// async function saveState(): Promise<void> {
-//   await stateFile.save(JSON.stringify(agentState, null, 2), {
-//     contentType: 'application/json',
-//   });
-// }
-//
-// Call loadState() before app.listen() and saveState() after any mutation
-// of agentState. For round-robin assignment, keep the last assigned paragraph
-// id in the same persisted object (for example: {"lastAssignedParagraphId": 7})
-// and update it atomically after each /record request. For recordings and analysis sidecars, follow the same
-// pattern as the Syllable Stress Assessment Agent backend: write
-// {recordingId}.wav and {recordingId}.json to the bucket using:
-//
-// await bucket.file(`${recordingId}.wav`).save(wavBuffer, {
-//   contentType: 'audio/wav' });
-// await bucket.file(`${recordingId}.json`).save(
-//   JSON.stringify(analysisSidecar, null, 2), {
-//   contentType: 'application/json' });
-//
-// Add @google-cloud/storage to package.json dependencies when enabling this.
+async function loadState(): Promise<void> {
+  if (!googleCredentials && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    console.log('GCS credentials not configured — using in-memory state only.');
+    return;
+  }
+  try {
+    const [contents] = await stateFile.download();
+    const loaded = JSON.parse(contents.toString());
+    Object.assign(agentState, loaded);
+    console.log('State loaded from GCS:', JSON.stringify(agentState));
+  } catch (error: any) {
+    if (error?.code === 404) {
+      console.log('No existing state file in GCS — starting fresh.');
+    } else {
+      console.error('Failed to load state from GCS:', error);
+    }
+  }
+}
+
+async function saveState(): Promise<void> {
+  if (!googleCredentials && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    return; // GCS not configured; state is in-memory only
+  }
+  try {
+    await stateFile.save(JSON.stringify(agentState, null, 2), {
+      contentType: 'application/json',
+    });
+  } catch (error) {
+    console.error('Failed to save state to GCS:', error);
+  }
+}
+
 const agentState = {
   studyId: null as string | null,
   studyStatus: 'not_started',
@@ -279,6 +284,7 @@ class NESHSECExecutor implements AgentExecutor {
             await prolificClient.registerWebhook(studyId);
             agentState.studyId = studyId;
             agentState.studyStatus = 'published';
+            await saveState();
             result = {
               success: true,
               action,
@@ -320,6 +326,7 @@ class NESHSECExecutor implements AgentExecutor {
 
             const closeResponse = await prolificClient.closeStudy(agentState.studyId);
             agentState.studyStatus = 'closed';
+            await saveState();
             result = {
               success: true,
               action,
@@ -338,6 +345,7 @@ class NESHSECExecutor implements AgentExecutor {
         case 'convergence_status': {
           const convergence = await backendClient.getConvergenceStatus();
           agentState.lastConvergenceCheck = convergence;
+          await saveState();
           result = convergence;
           break;
         }
@@ -460,20 +468,115 @@ const requestHandler = new DefaultRequestHandler(
   new NESHSECExecutor()
 );
 
-app.get('/healthz', (_req, res) => {
+app.get('/api/healthz', (_req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-app.post('/webhook/prolific', express.json(), (req, res) => {
+app.get('/api/study/status', async (_req, res) => {
+  if (!agentState.studyId) {
+    res.status(200).json({ agentState, prolific: null });
+    return;
+  }
+  try {
+    const [study, submissions] = await Promise.all([
+      prolificClient.getStudy(agentState.studyId),
+      prolificClient.getSubmissions(agentState.studyId),
+    ]);
+    const submissionCount = Array.isArray(submissions)
+      ? submissions.length
+      : Array.isArray((submissions as any).results)
+        ? (submissions as any).results.length
+        : 0;
+    res.status(200).json({ agentState, prolific: { study, submissionCount } });
+  } catch (error) {
+    res.status(500).json({
+      agentState,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/study/launch', express.json(), async (_req, res) => {
+  if (agentState.studyId) {
+    res.status(409).json({
+      success: false,
+      error: 'A study is already active. Close it before launching a new one.',
+      studyId: agentState.studyId,
+    });
+    return;
+  }
+  try {
+    const createdStudy = await prolificClient.createStudy();
+    const studyId = (createdStudy.id ?? createdStudy.study_id) as string;
+    await prolificClient.publishStudy(studyId);
+    await prolificClient.registerWebhook(studyId);
+    agentState.studyId = studyId;
+    agentState.studyStatus = 'published';
+    await saveState();
+    res.status(200).json({
+      success: true,
+      studyId,
+      studyStatus: agentState.studyStatus,
+      estimatedCostUsd: ((300 * 1.5) * 1.33).toFixed(2),
+      estimatedCostNote:
+        'Approx $' +
+        ((300 * 1.5) * 1.33).toFixed(2) +
+        ' USD including Prolific platform fee (~33%). Excludes any VAT.',
+    });
+  } catch (error) {
+    res.status(error instanceof ProlificConfigurationError ? 401 : 500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/study/close', express.json(), async (_req, res) => {
+  if (!agentState.studyId) {
+    res.status(404).json({ success: false, error: 'No active study to close.' });
+    return;
+  }
+  try {
+    const closeResponse = await prolificClient.closeStudy(agentState.studyId);
+    agentState.studyStatus = 'closed';
+    await saveState();
+    res.status(200).json({
+      success: true,
+      studyId: agentState.studyId,
+      studyStatus: agentState.studyStatus,
+      closeResponse,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/convergence', async (_req, res) => {
+  try {
+    const convergence = await backendClient.getConvergenceStatus();
+    agentState.lastConvergenceCheck = convergence;
+    await saveState();
+    res.status(200).json(convergence);
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/webhook/prolific', express.json(), async (req, res) => {
   const { submission_id, participant_id } = req.body ?? {};
   agentState.submissionsReceived++;
+  await saveState();
   console.log(`Prolific webhook: submission ${submission_id} from ${participant_id}`);
   res.status(200).json({ received: true });
-  // PRODUCTION NOTE: In production, retrieve the participant's recorded audio
-  // from the /submit route's persisted GCS WAV file (keyed on submission_id),
-  // then call backendClient.evaluateExemplar() automatically here, persisting
-  // the result sidecar to GCS. For this PoC, audio is submitted directly by
-  // the participant via the /record -> /submit flow without webhook coordination.
+  // PRODUCTION NOTE: On webhook receipt, look up submission_id in the GCS bucket
+  // for a corresponding `${submission_id}.wav` file written by /submit. If found,
+  // re-evaluate or reprocess as needed and persist refreshed sidecars to GCS.
+  // In the current PoC, /submit does not yet write WAV files to GCS.
 });
 
 app.get('/record', async (req, res) => {
@@ -486,6 +589,7 @@ app.get('/record', async (req, res) => {
     const paragraphCount = await backendClient.getParagraphCount().catch(() => 10);
     const assignedId = (agentState.lastAssignedParagraphId % paragraphCount) + 1;
     agentState.lastAssignedParagraphId = assignedId;
+    await saveState();
     paragraphId = assignedId;
     // PRODUCTION NOTE: persist lastAssignedParagraphId to GCS after each assignment
     // and use an atomic compare-and-swap or a distributed lock to prevent duplicate
@@ -582,6 +686,14 @@ app.get('/record', async (req, res) => {
         const arrayBuffer = await blob.arrayBuffer();
         const audioContext = new AudioContext();
         const decoded = await audioContext.decodeAudioData(arrayBuffer);
+        // Close after we have finished reading decoded data. On Safari, closing the
+        // AudioContext before all channel data has been consumed can cause the
+        // getChannelData() calls below to return zeroed buffers. We defer close
+        // until after the monoBuffer is fully populated.
+        const channelSnapshots = [];
+        for (let c = 0; c < decoded.numberOfChannels; c++) {
+          channelSnapshots.push(new Float32Array(decoded.getChannelData(c)));
+        }
         await audioContext.close();
 
         const targetRate = 16000;
@@ -592,10 +704,10 @@ app.get('/record', async (req, res) => {
         const monoData = monoBuffer.getChannelData(0);
         for (let i = 0; i < decoded.length; i++) {
           let value = 0;
-          for (let c = 0; c < decoded.numberOfChannels; c++) {
-            value += decoded.getChannelData(c)[i] || 0;
+          for (let c = 0; c < channelSnapshots.length; c++) {
+            value += channelSnapshots[c][i] || 0;
           }
-          monoData[i] = value / decoded.numberOfChannels;
+          monoData[i] = value / channelSnapshots.length;
         }
 
         source.buffer = monoBuffer;
@@ -674,6 +786,14 @@ app.post('/submit', upload.single('audio'), async (req, res) => {
     const audioBase64 = req.file.buffer.toString('base64');
     const result = await backendClient.evaluateExemplar(paragraphId, audioBase64);
     agentState.submissionsForwarded++;
+    await saveState();
+
+    // TODO (production): persist WAV to GCS before forwarding to backend:
+    // await gcsBucket.file(`${submissionId}.wav`).save(req.file.buffer,
+    //   { contentType: 'audio/wav' });
+    // await gcsBucket.file(`${submissionId}.json`).save(
+    //   JSON.stringify({ pid, studyId, paragraphId, ...result }, null, 2),
+    //   { contentType: 'application/json' });
 
     const scoreSummary = (result as { analysis?: { score_summary?: unknown } }).analysis?.score_summary;
     console.log(
@@ -695,8 +815,12 @@ app.use('/.well-known/agent.json', agentCardHandler({ agentCardProvider: request
 app.use('/a2a', jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
 app.use('/', jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
 
-app.listen(port, () => {
-  console.log(`NESHSEC agent listening on port ${port}`);
-  console.log(`Agent card: ${serviceUrl}/.well-known/agent.json`);
-  console.log(`JSON-RPC endpoint: ${serviceUrl}/a2a`);
+loadState().then(() => {
+  app.listen(port, () => {
+    console.log(`NESHSEC agent listening on port ${port}`);
+    console.log(`Agent card: ${serviceUrl}/.well-known/agent.json`);
+    console.log(`JSON-RPC endpoint: ${serviceUrl}/a2a`);
+    console.log(`Study status: ${serviceUrl}/api/study/status`);
+    console.log(`GCS bucket: ${gcsBucketName}`);
+  });
 });
