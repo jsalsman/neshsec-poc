@@ -4,7 +4,7 @@
 [![Agent health](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fneshsec-poc.talknicer.com%2Fapi%2Fhealthz&query=%24.status&label=Agent%20health&color=brightgreen&labelColor=indigo)](https://neshsec-poc.talknicer.com/api/healthz)
 [![TypeScript version](https://img.shields.io/badge/TypeScript-5.9.3-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![A2A Compatible](https://img.shields.io/badge/A2A-compatible-purple)](https://a2aprotocol.ai/)
-[![Apache 2.0 License](https://img.shields.io/badge/License-Apache-2.0-brightgreen)](https://opensource.org/licenses/apache-2-0)
+[![Apache 2.0 License](https://img.shields.io/badge/License-Apache%202.0-brightgreen)](https://opensource.org/licenses/apache-2-0)
 [![Donate](https://img.shields.io/badge/Donate-gold?logo=paypal)](https://paypal.me/jsalsman)
 
 The NESHSEC PoC Agent is a TypeScript A2A service that orchestrates crowdsourced native English speech collection for homograph stress modeling. It exists to bootstrap the [Syllable Stress Assessment Agent](https://guildaidemo.talknicer.com)’s learned threshold calibration by launching a [Prolific.com](https://www.prolific.com) study, collecting native English speaker participants' paragraph recordings, and forwarding those recordings as native exemplars so the backend can improve stress-decision quality across target word pairs.
