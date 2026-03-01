@@ -1,4 +1,4 @@
 node_modules
-src
-*.ts
 .git
+dist
+npm-debug.log*
