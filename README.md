@@ -1,38 +1,134 @@
-# NESHSEC PoC Agent (Cloud Run Ready)
+# NESHSEC PoC Agent
 
-The Native English Speaker Homograph Stress Exemplar Crowdsourcer (NESHSEC) is a TypeScript A2A agent that controls a Prolific study, collects participant recordings for noun/verb homograph paragraphs, forwards submissions to the Syllable Stress Assessment Agent backend as native exemplars, and tracks convergence progress across all 69 target homograph pairs.
+NESHSEC PoC Agent is a focused TypeScript A2A service that orchestrates crowdsourced native English speech collection for homograph stress modeling. It exists to bootstrap the Syllable Stress Assessment Agent’s learned threshold calibration by launching a Prolific study, collecting participant paragraph recordings, and forwarding those recordings as native exemplars so the backend can improve stress-decision quality across target word pairs.
+
+## How it works
+
+The service exposes A2A skills that let an operator launch, inspect, and close a Prolific study targeted at native English speakers. During launch, the agent creates the study, publishes it, and registers a webhook so completed submissions can be observed by the service. This keeps the study lifecycle operationally centralized in one A2A-callable component.
+
+Participants enter through the Prolific external study URL and land on `GET /record`, where they are assigned a paragraph, shown the text to read, and given simple controls to record, stop, preview playback, and submit. The browser converts captured microphone input into 16kHz mono WAV before upload so submitted audio matches backend requirements.
+
+On `POST /submit`, the service forwards the recording to the Syllable Stress Assessment Agent backend via `pronunciation.evaluate` with `native_exemplar: true`. As exemplars accumulate, the backend’s adaptive pipeline improves threshold calibration, and the PoC agent can query best-effort progress using `convergence_status` while tracking study activity and submission counters toward the full set of 69 target homograph pairs.
 
 ## A2A skills
 
-| Skill ID | Purpose | Input params | Output shape |
-| --- | --- | --- | --- |
-| `study_control` | Launch, monitor, or close the Prolific study lifecycle. | JSON text payload with `skill_id: "study_control"` and `params.action` (`"launch"`, `"status"`, or `"close"`). | JSON summary including study metadata, submission counts, status, and estimated cost. If Prolific rejects due to auth, the task returns a failed A2A status with an error stating that `PROLIFIC_API_TOKEN` must be set correctly. |
-| `convergence_status` | Query backend convergence progress (best-effort). | JSON text payload with `skill_id: "convergence_status"` and optional empty `params`. | JSON backend `agent.about` result, used as convergence status until a dedicated endpoint exists. |
-| `submit_exemplar` | Forward a native exemplar evaluation request to backend. | JSON text payload with `skill_id: "submit_exemplar"`, `params.paragraph_id` (number), and `params.audio_wav_base64` (string). | Full JSON result returned from backend `pronunciation.evaluate`. |
+### study_control
+
+This skill manages Prolific study lifecycle actions (launch, status, close).
+
+Input:
+
+```json
+{ "skill_id": "study_control", "params": { "action": "launch" | "status" | "close" } }
+```
+
+Output:
+- `launch`: `{ success, studyId, studyStatus, estimatedCostUsd, estimatedCostNote }`
+- `status`: `{ success, study, submissions: { count }, agentState }`
+- `close`: `{ success, studyId, studyStatus, closeResponse }`
+
+`launch` creates the study, publishes it, and registers the webhook in one call. Estimated total includes an approximate 33% Prolific platform fee on top of the $1.50 participant reward.
+
+Example invocation:
+
+```json
+{
+  "skill_id": "study_control",
+  "params": {
+    "action": "launch"
+  }
+}
+```
+
+### convergence_status
+
+This skill requests best-effort backend convergence telemetry.
+
+Input:
+
+```json
+{ "skill_id": "convergence_status", "params": {} }
+```
+
+Output: the raw `agent.about` result returned by the Syllable Stress Assessment Agent backend.
+
+A dedicated convergence endpoint does not yet exist on the backend, so this is currently a best-effort status check. A future backend A2A method (`convergence_status`) is expected to expose per-word `decision_method` counts directly.
+
+Example invocation:
+
+```json
+{
+  "skill_id": "convergence_status",
+  "params": {}
+}
+```
+
+### submit_exemplar
+
+This skill forwards one native exemplar recording for backend evaluation and calibration.
+
+Input:
+
+```json
+{ "skill_id": "submit_exemplar", "params": { "paragraph_id": 3, "audio_wav_base64": "<base64-encoded 16kHz mono WAV>" } }
+```
+
+Output: the full `pronunciation.evaluate` result from the backend, including per-target stress evaluations and `score_summary`.
+
+Audio must be 16kHz mono WAV. The service recording page now converts browser-captured audio to that format before submission.
+
+Example invocation:
+
+```json
+{
+  "skill_id": "submit_exemplar",
+  "params": {
+    "paragraph_id": 3,
+    "audio_wav_base64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEA..."
+  }
+}
+```
 
 ## Express routes
 
-| Route | Method | Description |
-| --- | --- | --- |
-| `/record` | `GET` | Participant recording page. Assigns paragraph IDs in round-robin order by reading paragraph count from backend (`paragraphs.count`) and fetching paragraph text via `paragraphs.get_text`; displays prompt text before recording buttons. |
-| `/submit` | `POST` | Multipart upload endpoint (`audio`, `pid`, `study_id`, `submission_id`, `paragraph_id`) that forwards audio to backend evaluation. |
-| `/webhook/prolific` | `POST` | Prolific webhook receiver for `submissions.completed`; increments in-memory counters and logs events. |
-| `/healthz` | `GET` | Health endpoint returning `200 {"status":"ok"}`. |
+### GET /record
 
-The service also exposes standard A2A SDK routes at `/.well-known/agent.json`, `/a2a`, and `/`.
+This route assigns a paragraph (round-robin fallback), fetches paragraph text from the backend, and returns a minimal HTML page with start, stop, playback, and submit controls. Prolific query parameters `pid`, `study_id`, and `submission_id` are captured from the URL, while paragraph assignment is handled server-side when a custom field is unavailable. In production, paragraph distribution should move to Prolific Taskflow variants rather than relying on server-side rotation.
+
+### POST /submit
+
+This route accepts `multipart/form-data` with fields `audio` (file), `pid`, `study_id`, `submission_id`, and `paragraph_id`. It forwards the audio to backend `pronunciation.evaluate` as a native exemplar and returns:
+
+```json
+{ "success": true, "completion_code": "STRESS_DONE", "result": { "...": "backend response" } }
+```
+
+The backend requires 16kHz mono WAV, and the recording page performs conversion before upload.
+
+### POST /webhook/prolific
+
+This route receives Prolific `submissions.completed` events and increments the in-memory `submissionsReceived` counter. A production enhancement would retrieve persisted audio from GCS and forward automatically when webhook events arrive.
+
+### GET /healthz
+
+Returns `200` with JSON:
+
+```json
+{ "status": "ok" }
+```
+
+### A2A routes
+
+The A2A SDK middleware handles `/.well-known/agent.json`, `/a2a`, and `/`. The correct agent card route is `/.well-known/agent.json` (some documentation references `agent-card.json`, which is a typo).
 
 ## Environment variables
 
-Defaults are applied when values are missing:
-
-- `PROLIFIC_API_TOKEN=PLACEHOLDER`
-- `BACKEND_URL=https://guildaidemo.talknicer.com`
-- `SERVICE_URL=https://neshsec-poc.talknicer.com`
-- `PORT=8080` (if not set)
-
-If `PROLIFIC_API_TOKEN` is missing/invalid and Prolific rejects requests, the agent returns a clear error telling operators to configure `PROLIFIC_API_TOKEN`.
-
-If `HTTP_PROXY`/`HTTPS_PROXY` (or lowercase variants) are set, outbound backend and Prolific fetches use those proxy settings automatically (helps avoid `ENETUNREACH` in proxied environments).
+| Variable | Default | Description |
+|---|---|---|
+| PROLIFIC_API_TOKEN | PLACEHOLDER | Prolific Bearer token. Get from prolific.com. |
+| BACKEND_URL | https://guildaidemo.talknicer.com | Base URL of Syllable Stress Assessment Agent. |
+| SERVICE_URL | https://neshsec-poc.talknicer.com | Public URL of this service, used in agent card and Prolific study URL. |
+| PORT | 8080 | HTTP listen port. |
 
 ## Local development quickstart
 
@@ -43,6 +139,8 @@ export SERVICE_URL=http://localhost:8080
 npm install && npm run build && npm run start
 ```
 
+Without a valid `PROLIFIC_API_TOKEN`, `study_control` calls return a clear `PROLIFIC_API_TOKEN_MISSING_OR_INVALID` error. The `/record` and `/submit` routes and `convergence_status` skill still operate independently of Prolific credentials.
+
 ## Cloud Run deploy
 
 ```bash
@@ -51,15 +149,21 @@ gcloud run deploy neshsec-poc \
   --region us-west1 \
   --allow-unauthenticated \
   --port 8080 \
-  --set-env-vars PROLIFIC_API_TOKEN=...,BACKEND_URL=https://guildaidemo.talknicer.com,SERVICE_URL=https://neshsec-poc.talknicer.com
+  --set-env-vars PROLIFIC_API_TOKEN=...,\
+BACKEND_URL=https://guildaidemo.talknicer.com,\
+SERVICE_URL=https://neshsec-poc.talknicer.com
 ```
 
 ## Production notes
 
-- The PoC keeps `agentState` in memory. For production, persist it in GCS (load on startup, save after mutations) as documented in `src/server.ts` comments.
-- Persist the round-robin pointer (`lastAssignedParagraphId`) in that same GCS state object so distribution survives restarts.
-- Persist recordings and analysis sidecars to GCS (`{recordingId}.wav` and `{recordingId}.json`) to support robust webhook-triggered processing.
+Persist `agentState` to GCS so state survives restarts and redeployments, including `lastAssignedParagraphId` updates after each paragraph assignment. The commented storage example in `src/server.ts` shows the intended pattern for load/save and for recording/analysis sidecars.
+
+Accurate backend alignment depends on audio format: convert browser-captured webm/opus into 16kHz mono WAV before evaluation. In production this can be done using ffmpeg server-side or a robust WebAssembly converter client-side; this step is essential for PocketSphinx alignment quality.
+
+Use Prolific Taskflow API as the primary distribution strategy for paragraph balancing. Instead of a shared round-robin counter, create 10 paragraph-specific study variants with 30 slots each (10 × 30) to avoid concurrency edge cases and ensure deterministic sampling.
 
 ## References
 
+- Syllable Stress Assessment Agent backend: https://guildaidemo.talknicer.com
 - A2A JavaScript SDK: https://github.com/a2aproject/a2a-js
+- Prolific API docs: https://docs.prolific.com/api-reference/introduction
