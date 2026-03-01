@@ -472,6 +472,10 @@ app.get('/api/healthz', (_req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
+app.get('/', (_req, res) => {
+  res.redirect(302, 'https://github.com/jsalsman/neshsec-poc');
+});
+
 app.get('/status', async (_req, res) => {
   try {
     function esc(s: unknown): string {
