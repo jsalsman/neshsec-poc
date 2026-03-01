@@ -25,6 +25,7 @@ The service:
 
 ## Commands
 
+- `npm ci`: Install dependencies from lockfile before running build/tests in a fresh environment.
 - `npm run build`: Compile TypeScript into `dist/`.
 - `npm run start`: Run the compiled server (`dist/server.js`).
 
