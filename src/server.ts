@@ -322,11 +322,11 @@ class NESHSECExecutor implements AgentExecutor {
               action,
               studyId,
               studyStatus: agentState.studyStatus,
-              estimatedCostUsd: ((150 * 1.5) * 1.33).toFixed(2),
+              estimatedCostUsd: ((150 * 0.70) * 1.33).toFixed(2),
               estimatedCostNote:
                 'Approx $' +
-                ((150 * 1.5) * 1.33).toFixed(2) +
-                ' USD for 150 participants including Prolific platform fee (~33%). Excludes any VAT.',
+                ((150 * 0.70) * 1.33).toFixed(2) +
+                ' USD for 150 participants including Prolific platform fee (~33%).',
             };
           } else if (action === 'status') {
             if (!agentState.studyId) {
@@ -626,7 +626,7 @@ app.get('/launch', (_req, res) => {
 <title>Launch Study</title></head><body>
 <h1>Launch Prolific Study</h1>
 <p>This will create, publish, and register the webhook for a new Prolific study
-targeting 150 participants at £1.50 each (~£300 including Prolific platform fee).</p>
+targeting 150 participants at $0.70 each ($150 including Prolific platform fee).</p>
 <p>Only one study may be active at a time.</p>
 <button id="btn" onclick="launch()">Launch Study</button>
 <pre id="result"></pre>
@@ -664,11 +664,11 @@ app.post('/api/study/launch', express.json(), async (_req, res) => {
       success: true,
       studyId,
       studyStatus: agentState.studyStatus,
-      estimatedCostUsd: ((150 * 1.5) * 1.33).toFixed(2),
+      estimatedCostUsd: ((150 * 0.70) * 1.33).toFixed(2),
       estimatedCostNote:
         'Approx $' +
-        ((150 * 1.5) * 1.33).toFixed(2) +
-        ' USD for 150 participants including Prolific platform fee (~33%). Excludes any VAT.',
+        ((150 * 0.70) * 1.33).toFixed(2) +
+        ' USD for 150 participants including Prolific platform fee (~33%).',
     });
   } catch (error) {
     res.status(error instanceof ProlificConfigurationError ? 401 : 500).json({
