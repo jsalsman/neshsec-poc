@@ -268,7 +268,16 @@ class NESHSECExecutor implements AgentExecutor {
               break;
             }
             const publishResponse = await prolificClient.publishExistingStudy(studyId);
-            await prolificClient.registerWebhook(studyId);
+            let webhookWarning: string | null = null;
+            try {
+              await prolificClient.registerWebhook(studyId);
+            } catch (webhookError) {
+              webhookWarning =
+                webhookError instanceof Error
+                  ? webhookError.message
+                  : 'Webhook registration failed with unknown error';
+              console.error('Webhook registration failed (non-fatal):', webhookWarning);
+            }
             const study = await prolificClient.getStudy(studyId);
             const totalCost = study.total_cost ?? study.cost ?? null;
             const reward = study.reward ?? null;
@@ -282,6 +291,7 @@ class NESHSECExecutor implements AgentExecutor {
               studyId,
               studyStatus: agentState.studyStatus,
               publishResponse,
+              webhookWarning,
               study: {
                 name: study.name,
                 reward,
@@ -641,7 +651,16 @@ app.post('/api/study/launch', express.json(), async (req, res) => {
   }
   try {
     const publishResponse = await prolificClient.publishExistingStudy(studyId);
-    await prolificClient.registerWebhook(studyId);
+    let webhookWarning: string | null = null;
+    try {
+      await prolificClient.registerWebhook(studyId);
+    } catch (webhookError) {
+      webhookWarning =
+        webhookError instanceof Error
+          ? webhookError.message
+          : 'Webhook registration failed with unknown error';
+      console.error('Webhook registration failed (non-fatal):', webhookWarning);
+    }
 
     // Fetch study details to get cost information from the API
     const study = await prolificClient.getStudy(studyId);
@@ -658,6 +677,7 @@ app.post('/api/study/launch', express.json(), async (req, res) => {
       studyId,
       studyStatus: agentState.studyStatus,
       publishResponse,
+      webhookWarning,
       study: {
         name: study.name,
         reward,
