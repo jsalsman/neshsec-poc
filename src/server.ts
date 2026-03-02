@@ -274,7 +274,7 @@ class NESHSECExecutor implements AgentExecutor {
             const reward = study.reward ?? null;
             const totalPlaces = study.total_available_places ?? null;
             agentState.studyId = studyId;
-            agentState.studyStatus = 'published';
+            agentState.studyStatus = study.status ?? 'ACTIVE';
             await saveState();
             result = {
               success: true,
@@ -650,7 +650,7 @@ app.post('/api/study/launch', express.json(), async (req, res) => {
     const totalPlaces = study.total_available_places ?? null;
 
     agentState.studyId = studyId;
-    agentState.studyStatus = 'published';
+    agentState.studyStatus = study.status ?? 'ACTIVE';
     await saveState();
 
     res.status(200).json({
