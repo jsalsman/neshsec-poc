@@ -11,7 +11,7 @@ The NESHSEC PoC Agent is a TypeScript A2A service that orchestrates crowdsourced
 
 ## How it works
 
-The service exposes A2A skills that let an operator launch, inspect, and close a Prolific study targeted at native English speakers. During launch, the agent creates the study, publishes it, and registers a webhook so completed submissions can be observed by the service. This keeps the study lifecycle operationally centralized in one A2A-callable component.
+The service exposes A2A skills that let an operator launch, inspect, and close a Prolific study targeted at native English speakers. During launch, the agent publishes an existing dashboard-configured study and registers a webhook so completed submissions can be observed by the service. This keeps the study lifecycle operationally centralized in one A2A-callable component.
 
 Participants enter through the Prolific external study URL and land on `GET /record`, where they are assigned two paragraphs with compact `h4` headings, shown both texts to read, and given sequential controls to record, stop, preview playback, and submit both recordings. Each paragraph keeps the recording button, playback control, and recording status message on one line for quicker review while recording. The browser converts captured microphone input into 16kHz mono WAV before upload so submitted audio matches backend requirements.
 
@@ -30,11 +30,11 @@ Input:
 ```
 
 Output:
-- `launch`: `{ success, studyId, studyStatus, estimatedCostUsd, estimatedCostNote }`
+- `launch`: `{ success, studyId, studyStatus, publishResponse, study: { name, reward, totalPlaces, totalCost } }`
 - `status`: `{ success, study, submissions: { count }, agentState }`
 - `close`: `{ success, studyId, studyStatus, closeResponse }`
 
-`launch` creates the study, publishes it, and registers the webhook in one call. Estimated total includes an approximate 33% Prolific platform fee on top of the $0.70 participant reward.
+`launch` publishes an existing Prolific dashboard-configured study, registers the webhook, and returns cost metadata from the Prolific API.
 
 Example invocation:
 
@@ -42,7 +42,8 @@ Example invocation:
 {
   "skill_id": "study_control",
   "params": {
-    "action": "launch"
+    "action": "launch",
+    "study_id": "69a4571f9c16323be5f0c2ec"
   }
 }
 ```
@@ -104,7 +105,9 @@ Browser-friendly status dashboard showing study state and backend convergence da
 
 ### GET /launch
 
-Browser-accessible confirmation page that POSTs to /api/study/launch on button click and displays the JSON result inline. Includes a link to /status.
+Browser-accessible form page with a study ID text input that POSTs to
+/api/study/launch on button click and displays the JSON result inline.
+The study must already be configured in the Prolific dashboard before launching.
 
 ### GET /close
 
@@ -116,13 +119,17 @@ Returns current `agentState` and live Prolific study data (submission count and 
 
 ### POST /api/study/launch
 
-Creates, publishes, and registers webhook for a new Prolific study in one call. Returns `409` if a study is already active. Equivalent to the `study_control` launch A2A skill but callable with plain curl or a browser.
-The launch payload sets Prolific `prolific_id_option` to `url_parameters` so the external study URL can legally include `{{%PROLIFIC_PID%}}`, `{{%SESSION_ID%}}`, and `{{%STUDY_ID%}}` placeholders.
+Publishes an existing Prolific study (already configured in the Prolific dashboard)
+and begins tracking it. Requires a JSON body with a `study_id` field. Returns `409`
+if a study is already active, `400` if `study_id` is missing. Cost information is
+fetched from the Prolific API rather than computed locally.
 
 Example:
 
 ```bash
-curl -X POST https://neshsec-poc.talknicer.com/api/study/launch
+curl -X POST https://neshsec-poc.talknicer.com/api/study/launch \
+  -H "Content-Type: application/json" \
+  -d '{"study_id": "69a4571f9c16323be5f0c2ec"}'
 ```
 
 ### POST /api/study/close
@@ -180,7 +187,6 @@ The A2A SDK middleware handles `/.well-known/agent.json` and `/a2a`. `GET /` now
 | Variable | Default | Description |
 |---|---|---|
 | PROLIFIC_API_TOKEN | PLACEHOLDER | Prolific Bearer token. Get from prolific.com. |
-| PROLIFIC_LANGUAGE_FILTER_ID | (auto) | Optional Prolific eligibility filter ID for English fluency. If unset, the service tries known IDs (`fluent_languages`, `language_fluency`, `language_fluencies`) and returns a clear error if none are valid for your workspace. |
 | BACKEND_URL | https://guildaidemo.talknicer.com | Base URL of Syllable Stress Assessment Agent. |
 | SERVICE_URL | https://neshsec-poc.talknicer.com | Public URL of this service, used in agent card and Prolific study URL. |
 | GCS_BUCKET_NAME | neshsec-poc | GCS bucket name for persistent state and recording sidecars. |
@@ -202,7 +208,7 @@ If `npm run build` reports missing modules or type declarations (for example `@g
 npm ci
 ```
 
-Without a valid `PROLIFIC_API_TOKEN`, `study_control` calls return a clear `PROLIFIC_API_TOKEN_MISSING_OR_INVALID` error. If launch fails with an unknown Prolific filter ID, set `PROLIFIC_LANGUAGE_FILTER_ID` to the language filter ID configured in your Prolific workspace. The `/record` and `/submit` routes and `convergence_status` skill still operate independently of Prolific credentials.
+Without a valid `PROLIFIC_API_TOKEN`, `study_control` calls return a clear `PROLIFIC_API_TOKEN_MISSING_OR_INVALID` error. The `/record` and `/submit` routes and `convergence_status` skill still operate independently of Prolific credentials.
 
 ## Cloud Run deploy
 
@@ -227,7 +233,8 @@ Accurate backend alignment depends on audio format: convert browser-captured web
 
 Use Prolific Taskflow API as the primary distribution strategy for paragraph balancing. Instead of a shared round-robin counter, create 10 paragraph-specific study variants with 15 slots each (10 × 15) to avoid concurrency edge cases and ensure deterministic sampling.
 
-The current PoC cost estimate is $150 USD including Prolific platform fees (~33%) for 150 participants at $0.70 each.
+Cost is determined by the study configuration in the Prolific dashboard and returned
+from the Prolific API at launch time.
 
 ## References
 
@@ -241,10 +248,12 @@ The current PoC cost estimate is $150 USD including Prolific platform fees (~33%
 The Native English Speaker Homograph Stress Exemplar Crowdsourcer (NESHSEC) is an agent that recruits native English speakers via Prolific to record themselves reading paragraphs containing noun/verb homograph pairs, then submits those recordings to the Syllable Stress Assessment Agent as native exemplars. Its purpose is to bootstrap the data-driven stress-inference calibration of that backend, bringing threshold accuracy from a naive duration heuristic to approximately 95% correct — the practical ceiling given natural within-speaker variability. Without sufficient native exemplar data the Syllable Stress Assessment Agent falls back to a simple "longer syllable wins" heuristic; this agent exists to replace that fallback with statistically grounded, learned thresholds for all 69 target homograph pairs.
 
 **The Reagents:**
-The agent is implemented in TypeScript and deployed on the Guild platform. It depends on the Prolific API to create and monitor a study, recruit participants, and retrieve completed submission metadata. Each participant is presented with two of ten paragraphs covering all 69 target noun/verb homograph pairs as both parts of speech, and records themselves reading each aloud via a browser-based interface with per-paragraph toggle record, playback, and submit controls. Completed audio submissions are forwarded in parallel to the existing Syllable Stress Assessment Agent — a live A2A-compatible Python backend at guildaidemo.talknicer.com — via its `pronunciation.evaluate` JSON-RPC endpoint with `native_exemplar: true`, which persists each WAV and analysis sidecar to Google Cloud Storage and folds the new data into the backend's adaptive threshold computation. Agent state (study ID, submission counters, paragraph assignment cursor) is persisted to a separate GCS bucket via the `GOOGLE_CREDENTIALS` service account, surviving restarts. Prolific participant fees for approximately 150 submissions of two recordings each (300 total exemplars) should be $150 including platform fees at $0.70 per submission.
+The agent is implemented in TypeScript and deployed on the Guild platform. It depends on the Prolific API to create and monitor a study, recruit participants, and retrieve completed submission metadata. Each participant is presented with two of ten paragraphs covering all 69 target noun/verb homograph pairs as both parts of speech, and records themselves reading each aloud via a browser-based interface with per-paragraph toggle record, playback, and submit controls. Completed audio submissions are forwarded in parallel to the existing Syllable Stress Assessment Agent — a live A2A-compatible Python backend at guildaidemo.talknicer.com — via its `pronunciation.evaluate` JSON-RPC endpoint with `native_exemplar: true`, which persists each WAV and analysis sidecar to Google Cloud Storage and folds the new data into the backend's adaptive threshold computation. Agent state (study ID, submission counters, paragraph assignment cursor) is persisted to a separate GCS bucket via the `GOOGLE_CREDENTIALS` service account, surviving restarts. Prolific participant fees are fetched from the Prolific API at launch time rather
+than estimated locally; the study is configured directly in the Prolific dashboard
+before being published via the agent's /launch interface.
 
 **The Ritual:**
-The agent exposes three A2A skills (`study_control`, `convergence_status`, `submit_exemplar`) and companion human-navigable browser routes (`/launch`, `/close`, `/status`, `/record`). Launching via `/launch` or the `study_control` skill creates, publishes, and registers a Prolific webhook in a single call. Participants land on `/record`, are assigned two paragraphs via a server-side round-robin counter, record both, preview playback, and submit; the `/submit` route forwards both WAVs in parallel to the backend as native exemplars. Prolific completion webhook events increment the submission counter in persisted agent state. The `/status` dashboard displays live study state, submission counters, and backend capability metadata, auto-refreshing every ten seconds. The `convergence_status` skill and `/api/convergence` route query the backend's `agent.about` endpoint as a best-effort convergence check until a dedicated `convergence_status` backend method is added.
+The agent exposes three A2A skills (`study_control`, `convergence_status`, `submit_exemplar`) and companion human-navigable browser routes (`/launch`, `/close`, `/status`, `/record`). Launching via `/launch` or the `study_control` skill publishes and tracks an existing Prolific dashboard-configured study and registers a Prolific webhook in a single call. Participants land on `/record`, are assigned two paragraphs via a server-side round-robin counter, record both, preview playback, and submit; the `/submit` route forwards both WAVs in parallel to the backend as native exemplars. Prolific completion webhook events increment the submission counter in persisted agent state. The `/status` dashboard displays live study state, submission counters, and backend capability metadata, auto-refreshing every ten seconds. The `convergence_status` skill and `/api/convergence` route query the backend's `agent.about` endpoint as a best-effort convergence check until a dedicated `convergence_status` backend method is added.
 
 **The Proof:**
 The agent has succeeded when all 69 target homograph pairs report `decision_method: learned_threshold` in the Syllable Stress Assessment Agent's evaluation responses, indicating that naive duration fallback has been fully replaced by native-exemplar-derived inference. The headline before/after metric is `percent_correct` on a held-out validation set of test fixture WAVs replayed against the backend before the Prolific study begins and again after convergence, quantifying the accuracy improvement the crowdsourced exemplar data delivered. Study completion and per-word convergence progress are themselves exposed as observable agent state via the `/status` dashboard and `convergence_status` skill, making the crowdsourcing pipeline inspectable and steerable throughout its run.
