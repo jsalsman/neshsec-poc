@@ -34,7 +34,7 @@ Output:
 - `status`: `{ success, study, submissions: { count }, agentState }`
 - `close`: `{ success, studyId, studyStatus, closeResponse }`
 
-`launch` creates the study, publishes it, and registers the webhook in one call. Estimated total includes an approximate 33% Prolific platform fee on top of the $1.50 participant reward.
+`launch` creates the study, publishes it, and registers the webhook in one call. Estimated total includes an approximate 33% Prolific platform fee on top of the $0.70 participant reward.
 
 Example invocation:
 
@@ -227,7 +227,7 @@ Accurate backend alignment depends on audio format: convert browser-captured web
 
 Use Prolific Taskflow API as the primary distribution strategy for paragraph balancing. Instead of a shared round-robin counter, create 10 paragraph-specific study variants with 15 slots each (10 × 15) to avoid concurrency edge cases and ensure deterministic sampling.
 
-The current PoC cost estimate is approximately $299 USD including Prolific platform fees (~33%) for 150 participants at $1.50 each (excludes VAT).
+The current PoC cost estimate is $150 USD including Prolific platform fees (~33%) for 150 participants at $0.70 each.
 
 ## References
 
