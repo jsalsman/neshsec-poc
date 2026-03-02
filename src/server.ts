@@ -15,7 +15,6 @@ import { Dispatcher, EnvHttpProxyAgent } from 'undici';
 
 const port = Number(process.env.PORT ?? 8080);
 const prolificApiToken = process.env.PROLIFIC_API_TOKEN ?? 'PLACEHOLDER';
-const prolificLanguageFilterId = process.env.PROLIFIC_LANGUAGE_FILTER_ID;
 const backendUrl = process.env.BACKEND_URL ?? 'https://guildaidemo.talknicer.com';
 const serviceUrl = process.env.SERVICE_URL ?? 'https://neshsec-poc.talknicer.com';
 const googleCredentials = process.env.GOOGLE_CREDENTIALS
@@ -77,66 +76,7 @@ class ProlificClient {
     return response.json();
   }
 
-  private buildStudyPayload(languageFilterId: string): object {
-    return {
-      name: 'English Pronunciation Recording Study',
-      description:
-        'You will read two short English paragraphs aloud and record yourself reading each one. The task takes approximately 3 minutes.',
-      // NOTE: paragraph_id is passed via a Prolific custom study field. In the PoC,
-      // if Prolific does not support custom fields on this plan, the /record route
-      // falls back to round-robin assignment via lastAssignedParagraphId.
-      // A production version would use Prolific's Taskflow API to create 10 study
-      // variants (one per paragraph), each with 30 participant slots.
-      external_study_url: `${this.servicePublicUrl}/record?pid={{%PROLIFIC_PID%}}&study_id={{%STUDY_ID%}}&submission_id={{%SESSION_ID%}}&paragraph_id={{%CUSTOM_STUDY_FIELD_paragraph_id%}}`,
-      prolific_id_option: 'url_parameters',
-      reward: 150,
-      estimated_completion_time: 3,
-      total_available_places: 150,
-      completion_codes: [
-        {
-          code: 'STRESS_DONE',
-          code_type: 'COMPLETED',
-          actions: [{ action: 'AUTOMATICALLY_APPROVE' }],
-        },
-      ],
-      filters: [{ filter_id: languageFilterId, selected_values: ['EN'] }],
-    };
-  }
-
-  private isUnknownFilterError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.includes('Filter ID') && message.includes('does not match a known filter');
-  }
-
-  public async createStudy(): Promise<any> {
-    const candidateFilterIds = [
-      prolificLanguageFilterId,
-      'fluent_languages',
-      'language_fluency',
-      'language_fluencies',
-    ].filter((id, index, all): id is string => Boolean(id) && all.indexOf(id) === index);
-
-    let lastError: unknown;
-    for (const filterId of candidateFilterIds) {
-      try {
-        return await this.request('/studies', {
-          method: 'POST',
-          body: JSON.stringify(this.buildStudyPayload(filterId)),
-        });
-      } catch (error) {
-        lastError = error;
-        if (!this.isUnknownFilterError(error)) {
-          throw error;
-        }
-      }
-    }
-
-    throw new Error(
-      `Prolific rejected all configured language filter IDs (${candidateFilterIds.join(', ')}). Set PROLIFIC_LANGUAGE_FILTER_ID to the filter ID available in your Prolific workspace.`
-    );
-  }
-
-  public async publishStudy(studyId: string): Promise<any> {
+  public async publishExistingStudy(studyId: string): Promise<any> {
     return this.request(`/studies/${studyId}/transition`, {
       method: 'POST',
       body: JSON.stringify({ action: 'PUBLISH' }),
@@ -310,10 +250,29 @@ class NESHSECExecutor implements AgentExecutor {
         case 'study_control': {
           const action = typeof params.action === 'string' ? params.action : undefined;
           if (action === 'launch') {
-            const createdStudy = await prolificClient.createStudy();
-            const studyId = (createdStudy.id ?? createdStudy.study_id) as string;
-            await prolificClient.publishStudy(studyId);
+            const studyId = typeof params.study_id === 'string' ? params.study_id.trim() : '';
+            if (!studyId) {
+              result = {
+                success: false,
+                error:
+                  'study_id is required. Pass the Prolific study ID to publish: {"skill_id": "study_control", "params": {"action": "launch", "study_id": "..."}}',
+              };
+              break;
+            }
+            if (agentState.studyId) {
+              result = {
+                success: false,
+                error: 'A study is already active. Close it before launching a new one.',
+                studyId: agentState.studyId,
+              };
+              break;
+            }
+            const publishResponse = await prolificClient.publishExistingStudy(studyId);
             await prolificClient.registerWebhook(studyId);
+            const study = await prolificClient.getStudy(studyId);
+            const totalCost = study.total_cost ?? study.cost ?? null;
+            const reward = study.reward ?? null;
+            const totalPlaces = study.total_available_places ?? null;
             agentState.studyId = studyId;
             agentState.studyStatus = 'published';
             await saveState();
@@ -322,11 +281,13 @@ class NESHSECExecutor implements AgentExecutor {
               action,
               studyId,
               studyStatus: agentState.studyStatus,
-              estimatedCostUsd: ((150 * 0.70) * 1.33).toFixed(2),
-              estimatedCostNote:
-                'Approx $' +
-                ((150 * 0.70) * 1.33).toFixed(2) +
-                ' USD for 150 participants including Prolific platform fee (~33%).',
+              publishResponse,
+              study: {
+                name: study.name,
+                reward,
+                totalPlaces,
+                totalCost,
+              },
             };
           } else if (action === 'status') {
             if (!agentState.studyId) {
@@ -625,25 +586,51 @@ app.get('/launch', (_req, res) => {
 <html lang="en"><head><meta charset="utf-8"/>
 <title>Launch Study</title></head><body>
 <h1>Launch Prolific Study</h1>
-<p>This will create, publish, and register the webhook for a new Prolific study
-targeting 150 participants at $0.70 each ($150 including Prolific platform fee).</p>
+<p>Enter the Prolific study ID to publish and begin tracking.
+The study must already be configured in the Prolific dashboard.
+Cost information will be fetched from the Prolific API after publishing.</p>
 <p>Only one study may be active at a time.</p>
-<button id="btn" onclick="launch()">Launch Study</button>
+<p>
+  <label for="studyIdInput">Prolific study ID:</label><br>
+  <input id="studyIdInput" type="text" size="32" placeholder="e.g. 69a4571f9c16323be5f0c2ec">
+</p>
+<button id="btn" onclick="launch()">Publish and Track Study</button>
 <pre id="result"></pre>
 <p><a href="/status">Study status</a> | <a href="/record">Test recording page</a></p>
 <script>
   async function launch() {
+    const studyId = document.getElementById('studyIdInput').value.trim();
+    if (!studyId) {
+      document.getElementById('result').textContent = 'Please enter a study ID.';
+      return;
+    }
     document.getElementById('btn').disabled = true;
-    document.getElementById('result').textContent = 'Launching...';
-    const r = await fetch('/api/study/launch', { method: 'POST' });
+    document.getElementById('result').textContent = 'Publishing...';
+    const r = await fetch('/api/study/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ study_id: studyId }),
+    });
     const j = await r.json();
     document.getElementById('result').textContent = JSON.stringify(j, null, 2);
+    if (!j.success) {
+      document.getElementById('btn').disabled = false;
+    }
   }
 </script>
 </body></html>`);
 });
 
-app.post('/api/study/launch', express.json(), async (_req, res) => {
+app.post('/api/study/launch', express.json(), async (req, res) => {
+  const studyId = String(req.body?.study_id ?? '').trim();
+  if (!studyId) {
+    res.status(400).json({
+      success: false,
+      error:
+        'study_id is required. Pass the Prolific study ID to publish in the request body: {"study_id": "..."}',
+    });
+    return;
+  }
   if (agentState.studyId) {
     res.status(409).json({
       success: false,
@@ -653,22 +640,30 @@ app.post('/api/study/launch', express.json(), async (_req, res) => {
     return;
   }
   try {
-    const createdStudy = await prolificClient.createStudy();
-    const studyId = (createdStudy.id ?? createdStudy.study_id) as string;
-    await prolificClient.publishStudy(studyId);
+    const publishResponse = await prolificClient.publishExistingStudy(studyId);
     await prolificClient.registerWebhook(studyId);
+
+    // Fetch study details to get cost information from the API
+    const study = await prolificClient.getStudy(studyId);
+    const totalCost = study.total_cost ?? study.cost ?? null;
+    const reward = study.reward ?? null;
+    const totalPlaces = study.total_available_places ?? null;
+
     agentState.studyId = studyId;
     agentState.studyStatus = 'published';
     await saveState();
+
     res.status(200).json({
       success: true,
       studyId,
       studyStatus: agentState.studyStatus,
-      estimatedCostUsd: ((150 * 0.70) * 1.33).toFixed(2),
-      estimatedCostNote:
-        'Approx $' +
-        ((150 * 0.70) * 1.33).toFixed(2) +
-        ' USD for 150 participants including Prolific platform fee (~33%).',
+      publishResponse,
+      study: {
+        name: study.name,
+        reward,
+        totalPlaces,
+        totalCost,
+      },
     });
   } catch (error) {
     res.status(error instanceof ProlificConfigurationError ? 401 : 500).json({
@@ -802,9 +797,9 @@ app.get('/record', async (req, res) => {
   </head>
   <body>
     <h1>English Pronunciation Recording Study</h1>
+    <p>You will read two short English paragraphs aloud while recording your speech. The task takes approximately three minutes. Speak naturally, but please make sure you are pronouncing the several two-syllable noun/verb homographs which appear in their correct sense; e.g. "REC-ord" for the noun and "re-CORD" for the verb. Please try to keep background noise to a minimum.</p>
     <p><strong>Please record yourself reading each paragraph aloud, then submit both recordings.</strong></p>
 
-    <h4>Paragraph 1</h4>
     <p id="paragraph1">${escapedParagraph1}</p>
     <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
       <button id="toggleRecord1" style="background-color:#16a34a;color:#ffffff;">Start Recording</button>
@@ -814,7 +809,6 @@ app.get('/record', async (req, res) => {
 
     <hr>
 
-    <h4>Paragraph 2</h4>
     <p id="paragraph2">${escapedParagraph2}</p>
     <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
       <button id="toggleRecord2" style="background-color:#16a34a;color:#ffffff;">Start Recording</button>
